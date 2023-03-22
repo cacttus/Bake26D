@@ -1,0 +1,121 @@
+{
+  "version": "2.0.0",
+  "tasks": [
+    // {
+    //   "label": "DELETE_OLD",
+    //   "type": "shell",
+    //   "command": "rm -r ./build ./bin",
+    // },
+    {
+      "label": "CMAKE_CONFIGURE_DEBUG",
+      "type": "shell",
+      "command": "cmake -B ./build -S . -DCMAKE_BUILD_TYPE=Debug",
+      "presentation": {
+        "echo": true,
+        "reveal": "always",
+        "focus": false,
+        "panel": "shared",
+        "showReuseMessage": false,
+        "clear": false,
+        "close": false
+      }
+    },
+    {
+      "label": "CMAKE_CONFIGURE_RELEASE",
+      "type": "shell",
+      "command": "cmake -B ./build -S . -DCMAKE_BUILD_TYPE=Release",
+      "presentation": {
+        "echo": true,
+        "reveal": "always",
+        "focus": false,
+        "panel": "shared",
+        "showReuseMessage": false,
+        "clear": false,
+        "close": false
+      }
+    },
+    {
+      "label": "DO_THING",
+      "type": "shell",
+      "command": "basename $(find ./bin/ -type f -executable -iname '*d')",
+      // "presentation": {
+      //   "echo": true,
+      //   "reveal": "always",
+      //   "focus": false,
+      //   "panel": "shared",
+      //   "showReuseMessage": false,
+      //   "clear": false,
+      //   "close": false
+      // },
+      // "group": {
+      //   "kind": "build",
+      //   "isDefault": true
+      // }
+    },
+    {
+      "label": "CMAKE_BUILD_DEBUG",
+      "dependsOn": [
+        "CMAKE_CONFIGURE_DEBUG"
+      ],
+      "type": "shell",
+      "command": "cmake --build ./build -v -t all -j ",
+      "presentation": {
+        "echo": true,
+        "reveal": "always",
+        "focus": false,
+        "panel": "shared",
+        "showReuseMessage": false,
+        "clear": false,
+        "close": false
+      },
+      "group": {
+        "kind": "build",
+        "isDefault": true
+      }
+    },
+    {
+      "label": "CMAKE_BUILD_RELEASE",
+      "dependsOn": [
+        "CMAKE_CONFIGURE_RELEASE"
+      ],
+      "type": "shell",
+      "command": "cmake --build ./build -v -t all -j",
+      "linux": "",
+      "options": {"shell": {}},
+      "runOptions": {},
+      "presentation": {
+        "echo": true,
+        "reveal": "always",
+        "focus": false,
+        "panel": "shared",
+        "showReuseMessage": false,
+        "clear": false,
+        "close": false
+      },
+      "group": {
+        "kind": "build",
+        "isDefault": false
+      }
+    },
+    {
+      "label": "CMAKE_CLEAN",
+      "type": "shell",
+      "command": "cmake --clean .",
+      "presentation": {
+        "echo": true,
+        "reveal": "always",
+        "focus": false,
+        "panel": "shared",
+        "showReuseMessage": false,
+        "clear": false,
+        "close": false
+      }
+    
+    },
+    {
+      "label": "KILL_TERMINAL",
+      "type": "shell",
+      "command": "killall -SIGTERM bash",
+    },
+  ]
+}

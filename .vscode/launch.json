@@ -1,0 +1,76 @@
+{
+  "version": "2.0.0",
+  "configurations": [
+    {
+      //https://stackoverflow.com/questions/61685124/how-can-i-tie-together-the-c-c-configurations-in-vscode-with-the-tasks-and-lau
+      "name": "GDB_Launch",
+      "type": "cppdbg",
+      "request": "launch",
+      //"program": "${workspaceFolder}/bin/",
+      //"program": "${command:shellCommand.execute}",
+      //"program": "task:DO_THING",
+      "program": "${workspaceFolder}/bin/d26-composer-0.0.1_x86d",
+      "args": [],
+      "stopAtEntry": false,
+      "cwd": "${workspaceFolder}",
+      "miDebuggerPath": "/usr/bin/gdb",
+      //"externalConsole": true, 
+      "MIMode": "gdb",
+      "preLaunchTask": "CMAKE_BUILD_DEBUG",
+      "setupCommands": [
+        {
+          "description": "Enable pretty-printing for gdb",
+          "text": "-enable-pretty-printing",
+          "ignoreFailures": true,
+        },
+        //'raise.c' issues with gcc
+        //https://github.com/Microsoft/vscode-cpptools/issues/1738
+        {
+          // Unable to open 'raise.c': Unable to read file '
+          ///build/glibc-YYA7BZ/glibc-2.31/sysdeps/unix/sysv/linux/raise.c' (Error: Unable to resolve non-existing file '/build/glibc-YYA7BZ/glibc-2.31/sysdeps/unix/sysv/linux/raise.c').
+          "description": "Skip <path> files",
+          "text": "-interpreter-exec console \"skip -gfi /build/glibc-YYA7BZ/glibc-2.31/*.c\""
+        }
+      ],
+      // "customLaunchSetupCommands": [
+      //   // {
+      //   //   "description": "echo stuff",
+      //   //   "text": "echo '\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\nvnhi'"
+      //   // },
+      //   {
+      //     "description": "echo stuff",
+      //     "text": "; ./build/asdfout.txt"
+      //   },
+      //],
+      "presentation": {
+        "hidden": false,
+        "reveal": "always",
+        "panel": "new",
+      }
+    },
+  ],
+  "compounds": [
+    {
+      "name": "GDB_LAUNCH_COMPOUND",
+      "preLaunchTask": "CMAKE_BUILD_DEBUG",
+      "configurations": [
+        "GDB_Launch"
+      ],
+    }
+  ],
+  //Impossible. It's imposible to dynamically set the program name in vscode if you generate it in the build
+  //Note requires the "Tasks Shell Input" extension
+  "inputs": [
+    {
+      "id": "get_output_filename",
+      "type": "command",
+      "command": "shellCommand.execute",
+      "args": {
+        //"command": "[ -f ./build/dummy.out ] && cat ./build/dummy.out || echo -n 'error_in_cmd'", //created from cmake build
+        //"command": "basename $(find ./bin/ -type f -executable -iname '*d')", //..x86d
+        "cwd": "${workspaceFolder}",
+        "useFirstResult": "true",
+      }
+    },
+  ],
+}

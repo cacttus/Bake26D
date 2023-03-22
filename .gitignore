@@ -1,1 +1,8 @@
-output
+/bin/
+/lib/
+/tmp/
+/build/
+/output/
+/.vs/
+*.vcxproj.filters
+*.vcxproj.user

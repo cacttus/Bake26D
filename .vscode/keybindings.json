@@ -1,0 +1,28 @@
+// Override key bindings by placing them into your key bindings file.
+[
+  {
+    "key": "f5",
+    "command": "workbench.action.tasks.runTask",
+    "args": "CMAKE_BUILD_DEBUG",
+    "when": "debugState == 'stopped'"
+  },
+  // {
+  //   "key": "f5",
+  //   "command": "workbench.action.debug.continue",
+  //   "when": "debugState == 'stopped'"
+  // },
+  {
+    "key": "f5",
+    "command": "workbench.action.debug.start",
+    "when": "debuggersAvailable && debugState == 'inactive'"
+  },
+  {
+    "key": "shift+f5",
+    "command": "workbench.action.debug.stop",
+    "when": "inDebugMode && !focusedSessionIsAttach"
+  },
+  {
+    "key": "f7",
+    "command": "workbench.action.tasks.build"
+  }
+]
