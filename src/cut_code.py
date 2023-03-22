@@ -354,3 +354,41 @@
     #     bb = BoundBox.fromBlender(ob.bound_box)
     #     inf._actions[act.name]._sweepBox.genExpandByBox(bb)
     #     inf._sweepBox.genExpandByBox(bb)
+
+      
+#     #color_master = Image.new(mode="RGBA", size= (self._size, self._size), color=(0,0,0,0))
+#     depth_master = Image.new(mode="RGBA", size= (self._size, self._size), color=(0,0,0,0))
+#     self.copyImages(self._root, depth_master, 1)
+#     
+#     
+# 
+#     path = os.path.join(outpath, "mt_depth_normal.png")
+#     msg("saving "+ path)
+#     depth_master.update()
+#     depth_master.save()
+
+    # PIL     
+    # color_master = Image.new(mode="RGBA", size= (self._size, self._size), color=(0,0,0,0))
+    # self.copyImages(self._root, color_master, 0)
+    # depth_master = Image.new(mode="RGBA", size= (self._size, self._size), color=(0,0,0,0))
+    # self.copyImages(self._root, depth_master, 1)
+    # 
+    # path = os.path.join(outpath, "mt_color.png")
+    # msg("saving "+ path)
+    # color_master.save(path)
+    # path = os.path.join(outpath, "mt_depth_normal.png")
+    # msg("saving "+ path)
+    # depth_master.save()
+        
+    # #https://docs.blender.org/api/current/bpy.ops.image.html
+    # with bpy.data.images.new('gen-'+name, self._size, self._size) as master_img:
+    #   master_img.alpha_mode = 'STRAIGHT'
+    #   master_img.depth = '8'
+    #   master_img.file_format = 'PNG'
+    #   self.copyImages(self._root, master_img, layer)
+    #   path = os.path.join(outpath, name+".png")
+    #   msg("saving "+ path)
+    #   master_img.update()
+    #   bpy.ops.image.save_as(filepath=path)
+    #   #master_img.save(path)
+    #   

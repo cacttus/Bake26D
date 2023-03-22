@@ -1,6 +1,7 @@
 {
-  "python.formatting.autopep8Args": ["--indent-size=2", "--max-line-length=99999"],
-
+  //https://pycodestyle.pycqa.org/en/latest/intro.html#error-codes
+  //https://pypi.org/project/autopep8/
+  "python.formatting.autopep8Args": ["--indent-size=2", "--ignore=W505,W690,E3,E226,E501,E701"],
   "editor.renderControlCharacters": true,
   "debug.onTaskErrors": "showErrors",
   "editor.renderWhitespace": "all",
