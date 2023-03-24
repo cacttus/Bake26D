@@ -1,21 +1,26 @@
 // Override key bindings by placing them into your key bindings file.
 [
   {
-    "key": "f5",
+    "key": "f7",
+    "command": "cmake.build",
+    "when": "cmake:enableFullFeatureSet && !cmake:hideBuildCommand"
+  },
+  {
+    "key": "f2",
     "command": "workbench.action.tasks.runTask",
-    "args": "CMAKE_BUILD_DEBUG",
+    "args": "build_run_python_cpp_test",
     "when": "debugState == 'stopped'"
+  },
+    {
+    "key": "f5",
+    "command": "cmake.debug",
+    "when": "debuggersAvailable && debugState == 'inactive'"
   },
   // {
   //   "key": "f5",
-  //   "command": "workbench.action.debug.continue",
-  //   "when": "debugState == 'stopped'"
+  //   "command": "workbench.action.debug.start",
+  //   "when": "debuggersAvailable && debugState == 'inactive'"
   // },
-  {
-    "key": "f5",
-    "command": "workbench.action.debug.start",
-    "when": "debuggersAvailable && debugState == 'inactive'"
-  },
   {
     "key": "shift+f5",
     "command": "workbench.action.debug.stop",
