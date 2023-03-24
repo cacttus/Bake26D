@@ -72,10 +72,34 @@ class MainWindow {
 private:
   std::map<int, KeyState> _keys;
   std::vector<KeyEvent> _key_events;
-  bool pressOrDown(int key);
-  void do_input();
   int _lastx = 0, _lasty = 0, _lastw = 0, _lasth = 0;
   bool _fullscreen = false;
+  int _width = 0;
+  int _height = 0;
+  GLFWwindow* _window = nullptr;
+  bool _running = false;
+  glm::mat4 _proj;
+  glm::mat4 _view;
+  glm::mat4 _model;
+  std::vector<RenderQuad> _quads;
+  glm::vec3 _pos = glm::vec3(0, 3, -10);
+  glm::vec3 _heading = glm::vec3(0, 0, -1);
+  glm::vec3 _up = glm::vec3(0, 1, 0);
+  float _speed = 10;     // 1;
+  float _rspeed = 0.5f;  // 0.5f;
+  float _delta = 0;
+
+  GLuint _vao = 0;
+  GLuint _vbo = 0;
+  GLuint _ibo = 0;
+  GLuint _shader = 0;
+  GLuint _fbo = 0;
+  GLuint _test_tex = 0;
+  GLuint _color= 0;
+  GLuint _normal_depth= 0;
+
+  bool pressOrDown(int key);
+  void do_input();
   void toggleFullscreen() {
     bool fs = false, dec = false;
     int x = 0, y = 0, w = 0, h = 0;
@@ -116,28 +140,9 @@ private:
     glfwSetWindowPos(_window, x, y);
     _fullscreen = fs;
   }
-
-  int _width = 0;
-  int _height = 0;
-  GLFWwindow* _window = nullptr;
-  GLint _tex = 0;
-  bool _running = false;
-  GLuint _vao;
-  GLuint _vbo;
-  GLuint _ibo;
-  GLuint _shader;
-  glm::mat4 _proj;
-  glm::mat4 _view;
-  glm::mat4 _model;
-  std::vector<RenderQuad> _quads;
-  GLuint _fbo;
-  GLuint _sampler;
-  glm::vec3 _pos = glm::vec3(0, 3, -10);
-  glm::vec3 _heading = glm::vec3(0, 0, -1);
-  glm::vec3 _up = glm::vec3(0, 1, 0);
-  float _speed = 10;     // 1;
-  float _rspeed = 0.5f;  // 0.5f;
-  float _delta = 0;
+  void exitApp() {
+    _running = false;
+  }
 
   static std::map<GLFWwindow*, MainWindow*> g_windows;
   static MainWindow* getWindow(GLFWwindow* win);
@@ -148,7 +153,6 @@ public:
   void initFramebuffer();
   void render();
   void on_resize(int w, int h);
-
   void makeProgram();
   void createRenderEngine();
   void quit();
@@ -495,6 +499,9 @@ MainWindow::MainWindow(int w, int h, std::string title) {
     if (key == GLFW_KEY_F11 && action == GLFW_PRESS) {
       mw->toggleFullscreen();
     }
+    if (key == GLFW_KEY_ESCAPE && action == GLFW_PRESS) {
+      mw->quit();
+    }
     if (action == GLFW_PRESS) {
       KeyEvent k;
       k._key = key;
@@ -528,6 +535,14 @@ MainWindow::MainWindow(int w, int h, std::string title) {
   glUseProgram(0);  // test  glew
 }
 MainWindow::~MainWindow() {
+  glDeleteVertexArrays(1, &_vao);
+  glDeleteTextures(1, &_test_tex);
+  glDeleteTextures(1, &_normal_depth);
+  glDeleteTextures(1, &_color);
+  glDeleteBuffers(1, &_vbo);
+  glDeleteBuffers(1, &_ibo);
+  glDeleteFramebuffers(1, &_fbo);
+  glDeleteProgram(_shader);
   glfwTerminate();
 }
 MainWindow* MainWindow::getWindow(GLFWwindow* win) {
@@ -633,7 +648,7 @@ void MainWindow::createRenderEngine() {
   Gu::checkErrors();
 
   // texs
-  _tex = Gu::createTexture("../assets/kratos.jpg");
+  _test_tex = Gu::createTexture("../assets/kratos.jpg");
 
   // bufs
   auto vbo_binding_idx = 0;
@@ -765,7 +780,7 @@ void MainWindow::render() {
   glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
 
   glBindVertexArray(_vao);
-  glBindTextureUnit(0, _tex);
+  glBindTextureUnit(0, _test_tex);
   glUseProgram(_shader);
   glDrawElements(GL_TRIANGLES, _quads.size() * 6, GL_UNSIGNED_INT, 0);
   glBindVertexArray(0);
