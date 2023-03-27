@@ -104,50 +104,39 @@ class BoundBox:
 # region utils
 
 class BinaryFile:
-  def __init__(self, filepath):
-    # this came from a with statement, so make sure this works
-    # with BinaryFile(path) as self._out:
-    self._binFile = None
+  def __init__(self, file):
+    assert(file != None)
+    self._binFile = file
     self._block = None
     self._blockname = None
     self._bytesWritten = 0
-    self._binFile = open(filepath, 'wb')
+  def bytesWritten(self): return self._bytesWritten
   def writeString(self, str):
     # https://docs.python.org/3/library/struct.html
     bts = bytes(str, 'utf-8')
     self.writeInt32(len(bts))
     self.writeData(bts)
-  def writeBool(self, val):
+  def writeBool(self, val: bool):
     self.writeData(struct.pack('?', val))
-
-  def writeByte(self, val):
+  def writeByte(self, val: int):
     # unsigned char..
     self.writeData(struct.pack('B', val))
-
-  def writeInt16(self, val):
+  def writeInt16(self, val: int):
     self.writeData(struct.pack('h', val))
-
-  def writeUInt16(self, val):
+  def writeUInt16(self, val: int):
     self.writeData(struct.pack('H', val))
-
-  def writeInt32(self, val):
+  def writeInt32(self, val: int):
     self.writeData(struct.pack('i', val))
-
-  def writeUInt32(self, val):
+  def writeUInt32(self, val: int):
     self.writeData(struct.pack('I', val))
-
-  def writeInt64(self, val):
+  def writeInt64(self, val: int):
     self.writeData(struct.pack('q', val))
-
-  def writeUInt64(self, val):
+  def writeUInt64(self, val: int):
     self.writeData(struct.pack('Q', val))
-
-  def writeFloat(self, val):
+  def writeFloat(self, val: float):
     self.writeData(struct.pack('f', val))
-
-  def writeDouble(self, val):
+  def writeDouble(self, val: float):
     self.writeData(struct.pack('d', val))
-
   def writeData(self, data: bytearray):
     # append to the current block, or, none
     if self._block != None:
@@ -155,55 +144,48 @@ class BinaryFile:
     else:
       self._binFile.write(data)
       self._bytesWritten += len(data)
-
   def writeMat4(self, val):
     # mat_4 = val.to_4x4()
     for row in range(4):
       for col in range(4):
         self.writeFloat(val[row][col])
     return
-
   def writeVec2(self, val):
     self.writeFloat(val[0])
     self.writeFloat(val[1])
     return
-
+  def writeIVec2(self, val):
+    self.writeInt32(val[0])
+    self.writeInt32(val[1])
+    return
   def writeVec3(self, val):
-    v = val
     self.writeFloat(val[0])
     self.writeFloat(val[1])
     self.writeFloat(val[2])
     return
-
   def writeVec4(self, val):
     self.writeFloat(val[0])
     self.writeFloat(val[1])
     self.writeFloat(val[2])
     self.writeFloat(val[3])
     return
-
   def writeQuat(self, val):
     self.writeVec4(val)
     return
-
   def writeMatrixPRS(self, mat):
     loc, rot, sca = mat.decompose()
     self.writeVec3(Convert.glVec3(loc))
     self.writeVec4(Convert.glQuat(rot))
     self.writeVec3(Convert.glVec3(sca))
-
   def writeNodeID(self, val):
     self.writeUInt32(val)
-
   def writeBoneID(self, val):
     self.writeUInt16(val)
-
   def startBlock(self, blockname):
     if self._block != None:
       throw("Tried to start a new block '" + blockname + "' within current block")
     self._block = bytearray()
     self._blockname = blockname
-
   def endBlock(self):
     if self._block == None:
       throw("Tried to end a not started block")

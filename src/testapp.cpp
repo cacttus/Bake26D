@@ -1,20 +1,7 @@
-#include <iostream>
-#include <string>
-#include <vector>
-#include <exception>
-#include <cstdarg>
-#include <filesystem>
-#include <map>
-#include <vector>
-
-// #include <GL/gl.h>
-#include <GL/glew.h>
-#define GLFW_INCLUDE_NONE
-#include <GLFW/glfw3.h>
-#include <glm/ext.hpp>
-// #include <glm/glm.hpp>
+#include "./testapp.h"
 #define STB_IMAGE_IMPLEMENTATION
 #include "stb_image.h"
+#include "./BinaryFile.h"
 
 namespace std {
 
@@ -23,52 +10,77 @@ std::string to_string(const GLubyte* __val) { return std::string((const char*)__
 
 }  // namespace std
 
+void main_thread_handler(void* user_data) {
+}
+
 namespace TestApp {
 
+#pragma region fwd
 // utils
-#define Assert(__x)                               \
-  {                                               \
-    if (!__x) {                                   \
-      Gu::debugBreak();                           \
-      throw Exception("Assertion Failed: " #__x); \
-    }                                             \
-  }
 
 // fwd
-class Log;
-class MainWindow;
-class Exception;
-class Gu;
-class Image;
-class RenderQuad;
 
+#pragma endregion
+#pragma region defs
+//
+// class b2_obj{
+//   int32_t _id = -1
+//   std::string _name = ""
+//   std::vector<b2_action> _actions ;
+//
+//   def serialize(self, bf : BinaryFile):
+//     bf.writeInt32(self._id)
+//     bf.writeString(self._name)
+//     bf.writeInt32(len(self._actions))
+//     for act in self._actions:
+//       self._actions[act].serialize(bf)
+// class b2_action:
+//   def __init__(self):
+//     self._id = -1
+//     self._name = ""
+//     self._frames = {}
+//   def serialize(self, bf : BinaryFile):
+//     bf.writeInt32(self._id)
+//     bf.writeString(self._name)
+//     bf.writeInt32(len(self._frames))
+//     for fr in self._frames:
+//       self._frames[fr].serialize(bf)
+// class b2_frame:
+//   def __init__(self):
+//     self._seq: float = -1  # float
+//     self._name = ""
+//     self._texid = -1
+//     self._x = -1
+//     self._y = -1
+//     self._w = -1
+//     self._h = -1
+//   def serialize(self, bf : BinaryFile):
+//     bf.writeFloat(self._seq)
+//     bf.writeString(self._name)
+//     bf.writeInt32(self._texid)
+//     bf.writeInt32(self._x)
+//     bf.writeInt32(self._y)
+//     bf.writeInt32(self._w)
+//     bf.writeInt32(self._h)
+// class b2_tex:
+//   def __init__(self):
+//     self._texid = -1
+//     self._texs : str = []
 // clss dcl
-class Gu {
-public:
-  static std::filesystem::path app_path;
-  static auto createShader(std::string vert_src, std::string geom_src, std::string frag_src);
-  static auto compileShader(GLenum type, std::string src);
-  static void checkErrors();
-  static void debugBreak();
-  static auto createTexture(std::string fileloc);
-  static std::string printDebugMessages();
-  static std::string getShaderInfoLog(GLint prog);
-  static std::string getProgramInfoLog(GLint prog);
-  static void rtrim(std::string& s);
-  static GLint glGetInteger(GLenum arg);
-  static float shitrand(float a, float b) { return (((float)a) + (((float)random() / (float)(RAND_MAX))) * (((float)b) - ((float)a))); }
-};
-enum class KeyState {
-  Up,
-  Press,
-  Down,
-  Release,
-};
-struct KeyEvent {
-  int _key;
-  bool _press;
-};
+
 class MainWindow {
+private:
+  enum class KeyState {
+    Up,
+    Press,
+    Down,
+    Release,
+  };
+  struct KeyEvent {
+    int _key = 0;
+    bool _press = false;
+  };
+
 private:
   std::map<int, KeyState> _keys;
   std::vector<KeyEvent> _key_events;
@@ -95,9 +107,13 @@ private:
   GLuint _shader = 0;
   GLuint _fbo = 0;
   GLuint _test_tex = 0;
-  GLuint _color= 0;
-  GLuint _normal_depth= 0;
+  GLuint _color = 0;
+  GLuint _normal_depth = 0;
 
+  std::vector<b2_tex> _texs;
+  std::vector<b2_obj> _objs;
+
+  void loadMeta(std::string);
   bool pressOrDown(int key);
   void do_input();
   void toggleFullscreen() {
@@ -155,85 +171,132 @@ public:
   void on_resize(int w, int h);
   void makeProgram();
   void createRenderEngine();
-  void quit();
+  void quit_everything();
   void run();
 };
-class Exception {
-  std::string _what = "";
 
-public:
-  Exception(std::string what) { _what = what; }
-  std::string toString() { return _what; }
-};
-class Log {
-public:
-  static std::string CC_BLACK;
-  static std::string CC_RED;
-  static std::string CC_GREEN;
-  static std::string CC_YELLOW;
-  static std::string CC_BLUE;
-  static std::string CC_PINK;
-  static std::string CC_CYAN;
-  static std::string CC_WHITE;
-  static std::string CC_NORMAL;
-
-  static std::string cc_reset() { return "\033[0m"; }
-  static std::string cc_color(std::string color, bool bold) { return color + ";1" + (bold ? "m" : ""); }
-  static void err(std::string s) { _output(CC_RED, false, "E", s); }
-  static void dbg(std::string s) { _output(CC_CYAN, false, "D", s); }
-  static void msg(std::string s) { _output(CC_WHITE, false, "I", s); }
-  static void exception(Exception ex) {
-    err(ex.toString());
-    auto tbout = cc_color(CC_WHITE, true) + std::string(ex.toString()) + cc_reset();
-    _print(tbout);
-  }
-  static void _output(std::string color, bool bold, std::string type, std::string s) {
-    s = _header(color, bold, type) + s + cc_reset();
-    _print(s);
-  }
-  static void _print(std::string s) { std::cout << s << std::endl; }
-  static std::string _header(std::string color, bool bold, std::string type) {
-    // secs = time(NULL) - Log::_start_time
-    // dt = str(datetime.timedelta(seconds=secs))
-    return std::string("[") + cc_color(color, bold) + "][" + type + "]";
-  }
-};
-struct QuadVert {
-  glm::vec3 _v;
-  float _pd;
-  glm::vec2 _x;
-  glm::vec4 _c;
-};
-struct RenderQuad {
-  QuadVert _verts[4];
-  // TODO: model matrix
-  void translate(glm::vec3 off) {
-    for (auto& v : _verts) {
-      v._v += off;
-    }
-  }
-  void scale(glm::vec3 scl) {
-    auto c = (_verts[2]._v - _verts[0]._v) * 0.5f;
-    for (auto& v : _verts) {
-      v._v = (v._v - c) * scl + c;
-    }
-  }
-};
-
+#pragma endregion
+#pragma region static data
 // static data
-std::string Log::CC_BLACK = "\033[30";
-std::string Log::CC_RED = "\033[31";
-std::string Log::CC_GREEN = "\033[32";
-std::string Log::CC_YELLOW = "\033[33";
-std::string Log::CC_BLUE = "\033[34";
-std::string Log::CC_PINK = "\033[35";
-std::string Log::CC_CYAN = "\033[36";
-std::string Log::CC_WHITE = "\033[37";
-std::string Log::CC_NORMAL = "\033[0;39";
+std::string Log::CC_BLACK = "30";
+std::string Log::CC_RED = "31";
+std::string Log::CC_GREEN = "32";
+std::string Log::CC_YELLOW = "33";
+std::string Log::CC_BLUE = "34";
+std::string Log::CC_PINK = "35";
+std::string Log::CC_CYAN = "36";
+std::string Log::CC_WHITE = "37";
+std::string Log::CC_NORMAL = "39";
 std::map<GLFWwindow*, MainWindow*> MainWindow::g_windows;
 std::filesystem::path Gu::app_path = "";
 
-#pragma region GU
+#pragma endregion
+#pragma region b2
+class b2_obj;
+class b2_action;
+class b2_frame;
+class b2_tex;
+class BinaryFile;
+
+class b2_obj {
+public:
+  int32_t _id = -1;
+  std::string _name = "";
+  std::vector<b2_action> _actions;
+  void deserialize(BinaryFile* bf) {
+    // bf.writeInt32(self._id)
+    //     bf.writeString(self._name)
+    //     bf.writeInt32(len(self._actions))
+    //     for act in self._actions:
+    //       self._actions[act].serialize(bf)
+  }
+};
+class b2_action {
+public:
+  int32_t _id = -1;
+  std::string _name = "";
+  std::vector<b2_frame> _frames;
+  void deserialize(BinaryFile* bf) {
+    //  bf.writeInt32(self._id)
+    //  bf.writeString(self._name)
+    //  bf.writeInt32(len(self._frames))
+    //  for fr in self._frames:
+    //    self._frames[fr].serialize(bf)
+    //    };
+  }
+};
+class b2_frame {
+public:
+  float _seq = -1;
+  std::string _name = "";
+  int32_t _texid = -1;
+  int32_t _x = -1;
+  int32_t _y = -1;
+  int32_t _w = -1;
+  int32_t _h = -1;
+  void deserialize(BinaryFile* bf) {
+    // bf.writeFloat(self._seq)
+    // bf.writeString(self._name)
+    // bf.writeInt32(self._texid)
+    // bf.writeInt32(self._x)
+    // bf.writeInt32(self._y)
+    // bf.writeInt32(self._w)
+    // bf.writeInt32(self._h)
+  }
+};
+class b2_tex {
+public:
+  int32_t _texid = -1;
+  std::vector<std::string> _images;
+};
+#pragma endregion
+#pragma region Gu
+void Gu::debugBreak() {
+#if defined(__debugbreak)
+  //__debugbreak
+#elif _WIN32
+  //  DebugBreak();
+#elif __linux__
+  //  raise(SIGTRAP);
+#else
+  //   OS_NOT_SUPPORTED_ERROR
+#endif
+}
+uint64_t Gu::getMicroSeconds() {
+  int64_t ret;
+  std::chrono::nanoseconds ns = std::chrono::high_resolution_clock::now().time_since_epoch();
+  ret = std::chrono::duration_cast<std::chrono::microseconds>(ns).count();
+  return ret;
+}
+uint64_t Gu::getMilliSeconds() {
+  return getMicroSeconds() / 1000;
+}
+std::string Gu::executeReadOutput(const std::string& cmd) {
+  std::string data = "";
+#if defined(__linux__)
+  // This works only if VSCode launches the proper terminal (some voodoo back there);
+  const int MAX_BUFFER = 8192;
+  char buffer[MAX_BUFFER];
+  std::memset(buffer, 0, MAX_BUFFER);
+  std::string cmd_mod = std::string() + cmd + " 2>&1";  // redirect stderr to stdout
+
+  FILE* stream = popen(cmd_mod.c_str(), "r");
+  if (stream) {
+    while (fgets(buffer, MAX_BUFFER, stream) != NULL) {
+      data.append(buffer);
+    }
+    if (ferror(stream)) {
+      std::cout << "Error executeReadOutput() " << std::endl;
+    }
+    clearerr(stream);
+    pclose(stream);
+  }
+#else
+  LogWarn("Tried to call invalid method on non-linux platform.");
+  // Do nothing
+#endif
+  return data;
+}
 void Gu::rtrim(std::string& s) {
   int len = 0;
   for (len = s.length(); len > 0; len--) {
@@ -247,13 +310,6 @@ GLint Gu::glGetInteger(GLenum arg) {
   GLint out = 0;
   glGetIntegerv(arg, &out);
   return out;
-}
-void Gu::debugBreak() {
-#if defined(__debugbreak)
-  __debugbreak
-#elif defined(SIGTRAP)
-  raise(SIGTRAP);
-#endif
 }
 std::string Gu::getShaderInfoLog(GLint prog) {
   GLint maxlen = 0;
@@ -357,36 +413,12 @@ auto Gu::createShader(std::string vert_src, std::string geom_src, std::string fr
   }
   return prog;
 }
-class Image {
-private:
-  int _width = 0;
-  int _height = 0;
-  int _bpp = 0;
-  std::unique_ptr<char[]> _data;
 
-public:
-  int width() { return _width; }
-  int height() { return _height; }
-  int bpp() { return _bpp; }
-  char* data() { return _data.get(); }
-
-  Image(int w, int h, int bpp, const char* data) {
-    _width = w;
-    _height = h;
-    _bpp = bpp;
-    size_t len = w * h * bpp;
-    _data = std::make_unique<char[]>(len);
-    memcpy(_data.get(), data, len);
-  }
-  virtual ~Image() {
-  }
-  static std::unique_ptr<Image> from_file(std::string path);
-};
 std::unique_ptr<Image> Image::from_file(std::string path) {
   int w = 0, h = 0, n = 0;
   auto* data = stbi_load(path.c_str(), &w, &h, &n, 4);
   if (data != NULL) {
-    Log::msg(std::string() + "Loaded " + path + " w=" + std::to_string(w) + " h=" + std::to_string(h) + "");
+    msg(std::string() + "Loaded " + path + " w=" + std::to_string(w) + " h=" + std::to_string(h) + "");
     auto img = std::make_unique<Image>(w, h, n, (char*)data);
     stbi_image_free(data);
     return img;
@@ -396,13 +428,19 @@ std::unique_ptr<Image> Image::from_file(std::string path) {
   }
   return nullptr;
 }
-
-auto Gu::createTexture(std::string fileloc) {
+bool Gu::exists(std::filesystem::path path) {
+  return std::filesystem::exists(path);
+}
+std::filesystem::path Gu::relpath(std::string relpath) {
   auto dirpath = std::filesystem::path(Gu::app_path).parent_path();
-  auto impath = dirpath / std::filesystem::path(fileloc);
+  auto impath = dirpath / std::filesystem::path(relpath);
+  return impath;
+}
+auto Gu::createTexture(std::filesystem::path impath) {
+  LogInfo("Loading " + impath.string());
   assert(std::filesystem::exists(impath));
 
-  auto img = Image::from_file(impath);
+  auto img = Image::from_file(impath.string());
 
   GLuint tex = 0;
   glCreateTextures(GL_TEXTURE_2D, 1, &tex);
@@ -462,7 +500,9 @@ std::string Gu::printDebugMessages() {
 
 // class def
 MainWindow::MainWindow(int w, int h, std::string title) {
-  Log::msg("Initializing " + std::to_string(w) + " " + std::to_string(h));
+  std::cout << "got here 1" << std::endl;
+  msg("Initializing " + std::to_string(w) + " " + std::to_string(h));
+  std::cout << "got here 2" << std::endl;
   _width = w;
   _height = h;
 
@@ -500,7 +540,7 @@ MainWindow::MainWindow(int w, int h, std::string title) {
       mw->toggleFullscreen();
     }
     if (key == GLFW_KEY_ESCAPE && action == GLFW_PRESS) {
-      mw->quit();
+      mw->quit_everything();
     }
     if (action == GLFW_PRESS) {
       KeyEvent k;
@@ -523,7 +563,7 @@ MainWindow::MainWindow(int w, int h, std::string title) {
       });
   glfwSetWindowCloseCallback(
       _window, [](auto win) {
-        MainWindow::getWindow(win)->quit();
+        MainWindow::getWindow(win)->quit_everything();
       });
 
   // glew
@@ -572,7 +612,7 @@ void MainWindow::run() {
     // glfwWaitEvents(100);
   }
 }
-void MainWindow::quit() {
+void MainWindow::quit_everything() {
   _running = false;
 }
 bool MainWindow::pressOrDown(int key) {
@@ -614,26 +654,29 @@ void MainWindow::do_input() {
     _key_events.clear();
   }
 
-  if (pressOrDown(GLFW_KEY_UP)) {
-    _pos += _heading * _speed * _delta;
+  auto spdmul = pressOrDown(GLFW_KEY_LEFT_SHIFT) || pressOrDown(GLFW_KEY_RIGHT_SHIFT) ? 5.0f : 1.0f;
+
+  if (pressOrDown(GLFW_KEY_UP) || pressOrDown(GLFW_KEY_W)) {
+    _pos += _heading * _speed * spdmul * _delta;
   }
-  if (pressOrDown(GLFW_KEY_DOWN)) {
-    _pos -= _heading * _speed * _delta;
+  if (pressOrDown(GLFW_KEY_DOWN) || pressOrDown(GLFW_KEY_S)) {
+    _pos -= _heading * _speed * spdmul * _delta;
   }
-  if (pressOrDown(GLFW_KEY_LEFT)) {
+  if (pressOrDown(GLFW_KEY_LEFT) || pressOrDown(GLFW_KEY_A)) {
     glm::mat4 m(1.0);
     // todo: up x h x h = "up"
     m = glm::rotate(m, (float)(M_PI * 2.0) * _rspeed * _delta, _up);
     _heading = glm::normalize(glm::vec3(m * glm::vec4(_heading, 1)));
   }
-  if (pressOrDown(GLFW_KEY_RIGHT)) {
+  if (pressOrDown(GLFW_KEY_RIGHT) || pressOrDown(GLFW_KEY_D)) {
     glm::mat4 m(1.0);
     m = glm::rotate(m, (float)(M_PI * 2.0) * -_rspeed * _delta, _up);
     _heading = glm::normalize(glm::vec3(m * glm::vec4(_heading, 1)));
   }
 }
+
 void MainWindow::createRenderEngine() {
-  Log::msg("GL version: " + std::to_string(glGetString(GL_VERSION)));
+  msg("GL version: " + std::to_string(glGetString(GL_VERSION)));
 
   glEnable(GL_DEPTH_TEST);
   glEnable(GL_SCISSOR_TEST);
@@ -648,7 +691,16 @@ void MainWindow::createRenderEngine() {
   Gu::checkErrors();
 
   // texs
-  _test_tex = Gu::createTexture("../assets/kratos.jpg");
+  _test_tex = Gu::createTexture(Gu::relpath("../../data/tex/kratos.jpg"));
+  auto normpath = Gu::relpath("../../output/mt_normal_depth.png");
+  auto colpath = Gu::relpath("../../output/mt_color.png");
+  if (!Gu::exists(normpath) || !Gu::exists(colpath)) {
+    throw Exception(std::string() + "could not find textures: \n" + (normpath.string()) + "\n" + (colpath.string()) + "\n run the blender python script first");
+  }
+  _normal_depth = Gu::createTexture(normpath);
+  _color = Gu::createTexture(colpath);
+
+  loadMeta("../../output/b2_meta.bin");
 
   // bufs
   auto vbo_binding_idx = 0;
@@ -743,6 +795,53 @@ void MainWindow::createRenderEngine() {
 
   Gu::checkErrors();
 }
+void MainWindow::loadMeta(std::string loc) {
+  msg("Loading metadata " + loc);
+  
+  BinaryFile bf;
+  bf.loadFromDisk(Gu::relpath(loc).string());
+  int hdr_b = bf.readByte();
+  int hdr_2 = bf.readByte();
+  int hdr_m = bf.readByte();
+  int hdr_d = bf.readByte();
+
+  int ntexs = bf.readInt32();
+  for (int i = 0; i < ntexs; i++) {
+    b2_tex b;
+    b._texid = bf.readInt32();
+    auto numimgs = bf.readInt32();
+    for (int img = 0; img < numimgs; img++) {
+      std::string image = bf.readString();
+      b._images.push_back(image);
+    }
+    _texs.push_back(b);
+  }
+  int nsprites = bf.readInt32();
+  for (int i = 0; i < nsprites; i++) {
+    b2_obj ob;
+    ob._id = bf.readInt32();
+    ob._name = bf.readString();
+    auto actioncount = bf.readInt32();
+    for (int iact = 0; iact < actioncount; iact++) {
+      b2_action act;
+      act._id = bf.readInt32();
+      act._name = bf.readString();
+      auto framecount = bf.readInt32();
+      for (int ifr = 0; ifr < framecount; ifr++) {
+        b2_frame fr;
+        fr._seq = bf.readFloat();
+        fr._texid = bf.readInt32();
+        fr._x = bf.readInt32();
+        fr._y = bf.readInt32();
+        fr._w = bf.readInt32();
+        fr._h = bf.readInt32();
+        act._frames.push_back(fr);
+      }
+      ob._actions.push_back(act);
+    }
+    _objs.push_back(ob);
+  }
+}
 void MainWindow::on_resize(int w, int h) {
   _lastw = _width;
   _lasth = _height;
@@ -756,7 +855,7 @@ void MainWindow::initFramebuffer() {
   // TODO:framebuffer
   glViewport(0, 0, _width, _height);
   glScissor(0, 0, _width, _height);
-  float fovx = 40.0f;
+  float fovx = 40.0f * ((float)M_PI / 180.0f);
   _proj = glm::perspectiveFov(fovx, (float)_width, (float)_height, 1.0f, 1000.0f);
 }
 void MainWindow::render() {
@@ -780,7 +879,7 @@ void MainWindow::render() {
   glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
 
   glBindVertexArray(_vao);
-  glBindTextureUnit(0, _test_tex);
+  glBindTextureUnit(0, _color);
   glUseProgram(_shader);
   glDrawElements(GL_TRIANGLES, _quads.size() * 6, GL_UNSIGNED_INT, 0);
   glBindVertexArray(0);
@@ -831,13 +930,26 @@ void MainWindow::makeProgram() {
 
 }  // namespace TestApp
 
-int main(int argc, char** argv) {
+extern "C" {
+
+DLL_EXPORT void DoSomething() {
+  std::cout << "hello world c++" << std::endl;
+}
+
+DLL_EXPORT int main(int argc, char** argv) {
   try {
+    std::cout << "c++ > executing main() argc=" << argc << std::endl;
+
+    Assert(argc > 0);
+
     TestApp::Gu::app_path = argv[0];
-    auto win = std::make_unique<TestApp::MainWindow>(500, 300, "2.6D Test");
+    auto win = std::make_unique<TestApp::MainWindow>(800, 600, "2.6D Test");
     win->run();
   }
   catch (TestApp::Exception ex) {
     TestApp::Log::exception(ex);
+    return 1;
   }
+  return 0;
+}
 }

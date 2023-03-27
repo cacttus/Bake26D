@@ -3,6 +3,8 @@ lib
 tmp
 build
 output
+obj
 /.vs/
+CMakeCache.txt
 *.vcxproj.filters
 *.vcxproj.user

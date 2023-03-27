@@ -2,9 +2,29 @@
   "version": "2.0.0",
   "tasks": [
     {
-      "label": "build_run_python_cpp_test",
+      "label": "BUILD_ALL_DEBUG",
+      "problemMatcher": [],
+      "presentation": {
+        "echo": true,
+        "reveal": "always",
+        "focus": false,
+        "panel": "shared",
+        "showReuseMessage": false,
+        "clear": false,
+        "close": false
+      },
       "type": "shell",
-      "command": "${WorkspaceDir}/build_run_python_cpp_test.sh",
+      "command": "${workspaceFolder}/build.sh debug",
+      "group": {
+        "kind": "build",
+        "isDefault": true
+      },
+    },
+    {
+      "label": "ALL_CLEAN",
+      "type": "shell",
+      "command": "echo cleaning ${workspaceFolder}/; rm -rf ${workspaceFolder}/bin; rm -rf ${workspaceFolder}/obj; rm -rf ${workspaceFolder}/tmp; rm -rf ${workspaceFolder}/build; rm ${workspaceFolder}/CMakeCache.txt;",
+      "problemMatcher": [],
       "presentation": {
         "echo": true,
         "reveal": "always",
@@ -14,7 +34,56 @@
         "clear": false,
         "close": false
       }
-    },
+    },    
+      {
+        "label": "DOTNET_BUILD_DEBUG",
+        "command": "dotnet",
+        "type": "process",
+        //"options": {"cwd": "${workspaceFolder}"},
+        "args": [
+          "build",
+          // Ask dotnet build to generate full paths for file names.
+          "/property:GenerateFullPaths=true",
+          // Do not generate summary otherwise it leads to duplicate errors in Problems panel
+          "/consoleloggerparameters:NoSummary",
+        ],
+        "group": "build",
+        "presentation": {
+          "echo": true,
+          "reveal": "always",
+          "focus": false,
+          "panel": "shared",
+          "showReuseMessage": false,
+          "clear": false,
+          "close": false
+        },
+        "problemMatcher": "$msCompile",
+      },
+      {
+        "label": "DOTNET_BUILD_RELEASE",
+        "command": "dotnet",
+        "type": "process",
+        "args": [
+          "build",
+          "-c",
+          "Release",
+          // Ask dotnet build to generate full paths for file names.
+          "/property:GenerateFullPaths=true",
+          // Do not generate summary otherwise it leads to duplicate errors in Problems panel
+          "/consoleloggerparameters:NoSummary",
+        ],
+        "group": "build",
+        "presentation": {
+          "echo": true,
+          "reveal": "always",
+          "focus": false,
+          "panel": "shared",
+          "showReuseMessage": false,
+          "clear": false,
+          "close": false
+        },
+        "problemMatcher": "$msCompile",
+      },    
     {
       "label": "CMAKE_CONFIGURE_DEBUG",
       "type": "shell",
@@ -44,24 +113,6 @@
       }
     },
     {
-      "label": "DO_THING",
-      "type": "shell",
-      "command": "basename $(find ./bin/ -type f -executable -iname '*d')",
-      // "presentation": {
-      //   "echo": true,
-      //   "reveal": "always",
-      //   "focus": false,
-      //   "panel": "shared",
-      //   "showReuseMessage": false,
-      //   "clear": false,
-      //   "close": false
-      // },
-      // "group": {
-      //   "kind": "build",
-      //   "isDefault": true
-      // }
-    },
-    {
       "label": "CMAKE_BUILD_DEBUG",
       "dependsOn": [
         "CMAKE_CONFIGURE_DEBUG"
@@ -77,9 +128,24 @@
         "clear": false,
         "close": false
       },
+      "problemMatcher": {
+        "owner": "cpp",
+        "fileLocation": [
+          "relative",
+          "${workspaceFolder}/src"
+        ],
+        "pattern": {
+          "regexp": "^(.*):(\\d+):(\\d+):\\s+(warning|error):\\s+(.*)$",
+          "file": 1,
+          "line": 2,
+          "column": 3,
+          "severity": 4,
+          "message": 5
+        },
+      },
       "group": {
         "kind": "build",
-        "isDefault": true
+        "isDefault": "true"
       }
     },
     {
@@ -90,7 +156,9 @@
       "type": "shell",
       "command": "cmake --build ./build -v -t all -j",
       "linux": "",
-      "options": {"shell": {}},
+      "options": {
+        "shell": {}
+      },
       "runOptions": {},
       "presentation": {
         "echo": true,
@@ -101,30 +169,22 @@
         "clear": false,
         "close": false
       },
-      "group": {
-        "kind": "build",
-        "isDefault": false
-      }
-    },
-    {
-      "label": "CMAKE_CLEAN",
-      "type": "shell",
-      "command": "cmake --clean .",
-      "presentation": {
-        "echo": true,
-        "reveal": "always",
-        "focus": false,
-        "panel": "shared",
-        "showReuseMessage": false,
-        "clear": false,
-        "close": false
-      }
-    
-    },
-    {
-      "label": "KILL_TERMINAL",
-      "type": "shell",
-      "command": "killall -SIGTERM bash",
+      "problemMatcher": {
+        "owner": "cpp",
+        "fileLocation": [
+          "relative",
+          "${workspaceFolder}/src"
+        ],
+        "pattern": {
+          "regexp": "^(.*):(\\d+):(\\d+):\\s+(warning|error):\\s+(.*)$",
+          "file": 1,
+          "line": 2,
+          "column": 3,
+          "severity": 4,
+          "message": 5
+        },
+      },
+      "group": "build",
     },
   ]
 }

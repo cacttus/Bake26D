@@ -38,10 +38,9 @@ import multiprocessing
 import bpy
 from mathutils import Vector, Matrix, Euler
 from PIL import Image
+import re
 
 def import_file(path, import_global=True):
-  # import_global = True : from Module import *
-  # import_global = False: import Module
   try:
     import os
     if not os.path.isabs(path):
@@ -60,29 +59,18 @@ def import_file(path, import_global=True):
           continue
         thismod = sys.modules[__name__]
         vars(thismod)[key] = val
-        #globals()[key] = val
     else:
       globals()[module_name] = module_obj
     os.chdir(save_cwd)
   except Exception as e:
-    raise ImportError(e)
+    raise Exception(e)
   return module_obj
 
-import_file('../modules/BlenderTools/BlenderTools.py')
-
-
-# # fmt: off
-# dir = os.path.join(os.path.dirname(os.path.realpath(__file__)), '../modules/BlenderTools')  # nopep8
-# if not dir in sys.path:  # nopep8
-#   sys.path.append(dir)  # nopep8
-# import BlenderTools  # nopep8
-# imp.reload(BlenderTools)  # nopep8
-# from BlenderTools import *  # nopep8
-# # fmt: on
+import_file('./BlenderTools.py')
 
 msg("cwd="+os.getcwd())
 
-class MtTex: pass  # nopep8
+class MtRegion: pass  # nopep8
 class MtNode: pass  # nopep8
 class PackedTexture: pass  # nopep8
 class ImagePacker: pass  # nopep8
@@ -99,12 +87,12 @@ class ExportLayer:
   Color = 'Color'
   DepthNormal = 'DepthNormal'
 
-class MtTex:
+class MtRegion:
   def __init__(self):
     self._layers = []
     self._width = 0
     self._height = 0
-    self._obj_info = None
+    self._texid = -1
     self._node = None
 class MtNode:
   def __init__(self):
@@ -171,29 +159,74 @@ class MtNode:
           self._rect.right(),
           self._rect.bottom())
       return self._child[0].plop(tex)
+class b2_obj:
+  _ob_idgen = 1
+  def __init__(self):
+    self._id = -1
+    self._name = ""
+    self._actions = {}
+  def serialize(self, bf: BinaryFile):
+    bf.writeInt32(self._id)
+    bf.writeString(self._name)
+    bf.writeInt32(len(self._actions))
+    for act in self._actions:
+      self._actions[act].serialize(bf)
+class b2_action:
+  def __init__(self):
+    self._id = -1
+    self._name = ""
+    self._frames = {}
+  def serialize(self, bf: BinaryFile):
+    bf.writeInt32(self._id)
+    bf.writeString(self._name)
+    bf.writeInt32(len(self._frames))
+    for fr in self._frames:
+      self._frames[fr].serialize(bf)
+class b2_frame:
+  def __init__(self):
+    self._seq: float = -1  # float
+    self._texid = -1
+    self._x = -1
+    self._y = -1
+    self._w = -1
+    self._h = -1
+  def serialize(self, bf: BinaryFile):
+    bf.writeFloat(self._seq)
+    bf.writeInt32(self._texid)
+    bf.writeInt32(self._x)
+    bf.writeInt32(self._y)
+    bf.writeInt32(self._w)
+    bf.writeInt32(self._h)
+class b2_tex:
+  def __init__(self):
+    self._texid = -1
+    self._texs: str = []
+
 class PackedTexture:
   def __init__(self):
-    self._id = 0
-    self._path = ""
+    self._texid = 0
     self._size = 0  # w and h
-    self._imagecount = 0
+    self._regioncount = 0
     self._root: MtNode = None
+    self._texnames = []
+
   def compose(self, outpath):
     assert(self._root)
-
-    # todo; obiously this is mostly just testing and hacks - we should loop our outputs and put a texture for each
+    # todo loop generic
     self.packLayer(outpath, 'mt_color', 0)
     self.packLayer(outpath, 'mt_normal_depth', 1)
 
   def packLayer(self, outpath, name, layer):
     msg("packing "+name+" layer="+str(layer)+" size="+str(self._size))
     ctest = (255, 0, 255, 255)
-    czero = (0,0,0,0)
+    czero = (0, 0, 0, 0)
     with Image.new(mode="RGBA", size=(self._size, self._size), color=czero) as master_img:
-      #note imae ha 'I' and 'F' for 32 bits
+      # note imae ha 'I' and 'F' for 32 bits
       #master_img = Image.new(mode="RGBA", size= (self._size, self._size), color=(0,0,0,0))
       self.copyImages(self._root, master_img, layer)
-      path = os.path.join(outpath, name+".png")
+      texname = name+".png"
+      self._texnames.append(texname)
+      path = os.path.join(outpath, texname)
       msg("saving " + path)
       msg(str(master_img.info))
       master_img.save(path)
@@ -201,6 +234,7 @@ class PackedTexture:
   def copyImages(self, node, master, layer):
     assert(node)
 
+    # also create objs for metadata
     if node._texture != None:
       path = node._texture._layers[layer]
       if os.path.exists(path):
@@ -212,10 +246,15 @@ class PackedTexture:
     if node._child[1] != None:
       self.copyImages(node._child[1], master, layer)
 
+  def serialize(self, bf: BinaryFile):
+    bf.writeInt32(self._texid)
+    bf.writeInt32(len(self._texnames))
+    for tn in self._texnames:
+      bf.writeString(tn)
 
 class ImagePacker:
   def packImages(texs, startsize=256, growsize=256):
-    # returns [PackedTexture ]
+    # returns [PackedTextureLayers ]
     mega_texs = []
     size = int(startsize)
     growsize = int(growsize)
@@ -228,13 +267,15 @@ class ImagePacker:
     # then remove from texs
     # then pack again
 
+    cur_tex_id = 1
     while size <= maxsize:
       size = min(int(size), int(maxsize))
 
-      pt = ImagePacker.packForSize(texs, size, int(size) == int(maxsize))
+      pt = ImagePacker.packForSize(texs, size, int(size) == int(maxsize), cur_tex_id)
 
       if pt != None:
-        pt._id = len(mega_texs) + 1
+        pt._id = cur_tex_id
+        cur_tex_id += 1
         ImagePacker.removePlopped(pt._root, texs)
         mega_texs.append(pt)
         size = startsize
@@ -246,9 +287,10 @@ class ImagePacker:
 
     return mega_texs
 
-  def packForSize(texs, size, force):
+  def packForSize(texs, size, force, tex_id):
     pt = PackedTexture()
     pt._size = int(size)
+    pt._texid = tex_id
     pt._root = MtNode()
     pt._root._rect = Box2i()
     pt._root._rect._min = ivec2(0, 0)
@@ -256,11 +298,13 @@ class ImagePacker:
 
     for texpath in texs:
       texs[texpath]._node = None
+      texs[texpath]._texid = -1
       # msg("texwh "+str(texs[texpath]._width)+" "+str(texs[texpath]._height))
       found = pt._root.plop(texs[texpath])
       if (found != None):
         texs[texpath]._node = found
-        pt._imagecount += 1
+        texs[texpath]._texid = tex_id
+        pt._regioncount += 1
       else:
         if force:
           return pt
@@ -276,7 +320,7 @@ class ImagePacker:
       ImagePacker.removePlopped(node._child[0], texs)
     if node._child[1] != None:
       ImagePacker.removePlopped(node._child[1], texs)
-      
+
 class ActionInfo:
   def __init__(self):
     self._name = ""
@@ -346,6 +390,7 @@ class Bake26:
   c_sprite_name = 'Sprite'
   c_inputFileSwitch = '-i'
   c_framePlaceholder = "####"
+  c_OBNM = 'B26'
 
   # endregion
 
@@ -553,7 +598,7 @@ class Bake26:
     deblur.inputs['Blur'].default_value = self._data._edge_blur
 
     # composite
-    #composite_node = bpy.context.scene.node_tree.nodes.new(type='CompositorNodeComposite')  # leave empty
+    # composite_node = bpy.context.scene.node_tree.nodes.new(type='CompositorNodeComposite')  # leave empty
     #composite_node.name = 'Composite'
     #bpy.context.scene.node_tree.links.new(deblur.outputs["Image"], composite_node.inputs['Image'])
 
@@ -568,7 +613,7 @@ class Bake26:
 
 
   def makeFileOutput(self, layer: ExportLayer):
-    #https://docs.blender.org/api/current/bpy.types.ImageFormatSettings.html
+    # https://docs.blender.org/api/current/bpy.types.ImageFormatSettings.html
     output = bpy.context.scene.node_tree.nodes.new(type='CompositorNodeOutputFile')
     #output.name = layer
     output.label = layer
@@ -579,7 +624,7 @@ class Bake26:
       output.format.color_depth = str(self._data._exportBitDepth)
       output.format.color_mode = 'RGBA'
       output.format.compression = 100
-      #output.format.use_zbuffer = True #getting weird depth settings
+      # output.format.use_zbuffer = True #getting weird depth settings
     elif fmt == ExportFormat.EXR:
       output.format.file_format = 'EXR'  # 'OPEN_EXR'  # HDR
       output.format.color_depth = str(self._data._exportBitDepth)  # '8'  # '32'
@@ -823,62 +868,184 @@ class Bake26:
     return path
 
   def actionFilePath(self, obname, actname, frame, azumith, zenith):
-    sep = self.spritePathSeparator()
-    fname = obname + sep
+    # actionFileName spriteFileName
+    sep = Bake26.spritePathSeparator()
+    # con obj act az   zen  fr  frf ext
+    # ID.guy.run.0025.0008.0034.200.Color.png
+
+    # cant have delimiter in names.
+    assert(not sep in obname)
+    assert(not sep in actname)
+
+    # TODO use the regex in the metadata and just replace
+
+    fname = Bake26.c_OBNM + sep
+    fname += obname + sep
     fname += actname + sep
-    fname += str(azumith) + sep
-    fname += str(zenith) + sep
-    frmi = int(frame)
-    frmf = int(round(frame - float(frmi), 3) * 1000)
-    # https://blender.stackexchange.com/questions/5280/how-to-use-the-current-file-name-as-the-the-output-name-in-the-file-output-node
-    fname += Bake26.c_framePlaceholder + sep  # str(str(frmi).zfill(3)) + sep #blender must always have frame numbers on output files so we put them here
-    fname += str(str(frmf).zfill(3))
+    fname += str(str(azumith).zfill(len(Bake26.c_framePlaceholder))) + sep
+    fname += str(str(zenith).zfill(len(Bake26.c_framePlaceholder))) + sep
+    fname += Bake26.c_framePlaceholder + sep  # blender file outputs must always have frame numbers so we put them here
+    frmf = int(round(frame - float(int(frame)), 3) * 1000)
+    fname += str(str(frmf).zfill(3)) + sep
 
     path = self.actionOutputPath(obname, actname)
     path = os.path.join(path, fname)
 
     return path
 
-  def spritePathSeparator(self):
-    return "."
+  def spritePathSeparator():
+    return "@"  # could use |
 
   def packTextures(self, outpath):
     texs = dict()
     outpath = os.path.abspath(outpath)
     Bake26.gatherTextures(outpath, texs, True)  # skip /output because we put the mt's in there
+    texs_cpy = dict(texs)
     pts = ImagePacker.packImages(texs)
 
     for pt in pts:
-      msg("writing " + " id=" + str(pt._id) + " count=" + str(pt._imagecount) + " size=" + str(pt._size))
+      msg("writing " + " id=" + str(pt._id) + " count=" + str(pt._regioncount) + " size=" + str(pt._size))
       pt.compose(outpath)
+    self.writeMetadata(outpath, texs_cpy, pts)
 
-  def gatherTextures(fpath, texs, skipdir):
+  def writeMetadata(self, outpath, texs, pts):
+    '''
+    ptex_count [int32]
+    .. foreach new b2_tex
+      ptex_id [int32]
+      num_texs [int32]
+      .. for num texs
+        tex name [string]
+    sprite_count [int32]
+      .. foreach new b2_obj 
+        id [int32]
+        name [string]
+        action_count [int32]
+        ..foreach new b2_action
+          id [int32]
+          name [string]
+          frame_count [int32]
+          ..foreach new b2_frame
+            tex_id [int32] 
+            sequence_id [float32]
+            x [int32]
+            y [int32]
+            w [int32]
+            h [int32]
+    '''
+
+    obj_dict = {}
+
+    # build objects
+    for region_fname in texs:
+      region = texs[region_fname]
+      assert(region._node != None)  # call this AFTER  build the nodetree
+      Bake26.buildB2Obj(region, region_fname, obj_dict)
+
+    # write file
+    mdpath = os.path.join(outpath, "b2_meta.bin")
+    msg("metadata path="+mdpath)
+    with open(mdpath, 'wb') as file:
+      bf = BinaryFile(file)
+
+      msg("byte thing = " + str(int(ord('B'))))
+      bf.writeByte(int(ord('B'.encode('utf-8'))))
+      bf.writeByte(int(ord('2'.encode('utf-8'))))
+      bf.writeByte(int(ord('M'.encode('utf-8'))))
+      bf.writeByte(int(ord('D'.encode('utf-8'))))
+      # texs
+      bf.writeInt32(len(pts))
+      for i in range(0, len(pts)):
+        pts[i].serialize(bf)
+
+      # objs
+      bf.writeInt32(len(obj_dict))
+      for obname in obj_dict:
+        ob = obj_dict[obname]
+        ob.serialize(bf)
+
+  def buildB2Obj(region: MtRegion, region_fname: str, obj_dict: dict):
+    sep = Bake26.spritePathSeparator()
+    grp = '([^'+sep+']+)'
+    # parse name
+    rxstr = Bake26.c_OBNM
+    rxstr += sep + grp  # ob 0
+    rxstr += sep + grp  # act 1
+    rxstr += sep + grp  # a 2
+    rxstr += sep + grp  # z 3
+    rxstr += sep + grp  # ifr 4
+    rxstr += sep + grp  # ffr 5
+    rxstr += sep + '(.+)'  # ext 6
+    # msg("fname="+region_fname)
+    # msg("rxstr="+rxstr)
+    fname = os.path.basename(region_fname)
+    rx = re.search(rxstr, fname)
+
+    if (not rx) or (len(rx.groups()) != 7):
+      raise Exception("Invalid file format group count ="+str(len(rx.groups())))
+    # msg("rx="+str(rx.groups()))
+
+    obname = rx.groups()[0]
+    actname = rx.groups()[1]
+    ifr = rx.groups()[4]
+    ffr = rx.groups()[5]
+
+    if not obname in obj_dict:
+      obj = b2_obj()
+      obj._id = b2_obj._ob_idgen
+      b2_obj._ob_idgen += 1
+      obj._name = obname
+      obj_dict[obname] = obj
+    obj = obj_dict[obname]
+    if not actname in obj._actions:
+      act = b2_action()
+      act._id = len(obj._actions)+1
+      act._name = actname
+      obj._actions[actname] = act
+    act = obj._actions[actname]
+    fr = b2_frame()
+    fr._texid = region._texid  # id of megatex
+    fr._x = region._node._rect.left()  # id of megatex
+    fr._y = region._node._rect.top()  # id of megatex
+    fr._w = region._node._rect.width()  # id of megatex
+    fr._h = region._node._rect.height()  # id of megatex
+    seq_str = ifr+"."+ffr
+    assert(not seq_str in act._frames)
+    seq = float(seq_str)  # "0004.200"
+    msg("seq="+str(seq))
+    fr._seqid = seq
+    act._frames[seq_str] = fr
+
+  def gatherTextures(fpath, texs: dict, skipdir):
     fpath = os.path.abspath(fpath)
     fds = os.listdir(fpath)  # get all files' and folders' names in the current directory
     color_extension = FileOutput.extension(ExportFormat.PNG, ExportLayer.Color)
-    
+
     for item in fds:  # loop through all the files and folders
-      
+
       color_path = os.path.join(fpath, item)
-      
+
       if os.path.isfile(color_path):
         if skipdir == False:
-          
+
           layer_ext = FileOutput.parse_extension(item)
-          
+
           if layer_ext == color_extension:
-            w,h = Utils.get_image_size(color_path)
-            assert(w>0)
-            assert(h>0)
+            w, h = Utils.get_image_size(color_path)
+            assert(w > 0)
+            assert(h > 0)
             # now set norms and shit
-            texs[color_path] = MtTex()
+            texs[color_path] = MtRegion()
             texs[color_path]._pathColor = color_path
             texs[color_path]._width = int(w)
             texs[color_path]._height = int(h)
-            
+            texs[color_path]._texid = -1
+            texs[color_path]._node = None
+            # map region to sprite and create sprite if none
+
             norm_ext = FileOutput.extension(ExportFormat.PNG, ExportLayer.DepthNormal)
-            norm_path=color_path.replace(layer_ext, norm_ext)
-            
+            norm_path = color_path.replace(layer_ext, norm_ext)
+
             texs[color_path]._layers = [color_path, norm_path]
 
 

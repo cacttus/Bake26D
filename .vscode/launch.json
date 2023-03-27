@@ -11,28 +11,44 @@
     //   //"console": "externalTerminal",
     //   "justMyCode": true
     // },
+    //cant mix mode debug here.
+    //https://github.com/OmniSharp/omnisharp-vscode/issues/3068
+    //cppvsdbg
     {
-      "name": "(gdb) Launch",
+      "name": "C# testapp Debug",
+      "type": "coreclr",
+      "request": "launch",
+      "preLaunchTask": "BUILD_ALL_DEBUG", //BUILD_ALL_DEBUG
+      "program": "${workspaceFolder}/bin/Debug/testapp.dll",
+      "args": [],
+      "cwd": "${workspaceFolder}",
+      "console": "internalConsole", //internalConsole, externalTerminal
+      "enableStepFiltering": false,
+      "stopAtEntry": false,
+     ,
+    },
+    {
+      "name": "C# testapp Release",
+      "type": "coreclr",
+      "request": "launch",
+      "preLaunchTask": "BUILD_ALL_RELEASE",
+      "program": "${workspaceFolder}/bin/Release/testapp.dll",
+      "args": [],
+      "cwd": "${workspaceFolder}",
+      "console": "internalConsole", //internalConsole, externalTerminal
+      "enableStepFiltering": false,
+      "stopAtEntry": false,
+    },
+    {
+      "name": "C++ testapp Debug BUILD",
       "type": "cppdbg",
       "request": "launch",
-      // Resolved by CMake Tools:
-      "program": "${command:cmake.launchTargetPath}",
+      "preLaunchTask": "CMAKE_BUILD_DEBUG",
+      "program": "${workspaceFolder}/bin/Debug/testapp", //${command:cmake.launchTargetPath}",
       "args": [],
-      "stopAtEntry": false,
       "cwd": "${workspaceFolder}",
-      "environment": [
-        {
-          // add the directory where our target was built to the PATHs
-          // it gets resolved by CMake Tools:
-          "name": "PATH",
-          "value": "$PATH:${command:cmake.launchTargetDirectory}"
-        },
-        {
-          "name": "OTHER_VALUE",
-          "value": "Something something"
-        }
-      ],
-      "externalConsole": true,
+      "externalConsole": false,
+      "stopAtEntry": false,
       "MIMode": "gdb",
       "setupCommands": [
         {
@@ -41,6 +57,25 @@
           "ignoreFailures": true
         }
       ]
-    }
+    },
+    {
+      "name": "C++ testapp Release  BUILD",
+      "type": "cppdbg",
+      "request": "launch",
+      "preLaunchTask": "CMAKE_BUILD_RELEASE",
+      "program": "${workspaceFolder}/bin/Release/testapp", //${command:cmake.launchTargetPath}",
+      "args": [],
+      "cwd": "${workspaceFolder}",
+      "externalConsole": false,
+      "stopAtEntry": false,
+      "MIMode": "gdb",
+      "setupCommands": [
+        {
+          "description": "Enable pretty-printing for gdb",
+          "text": "-enable-pretty-printing",
+          "ignoreFailures": true
+        }
+      ]
+    },
   ],
 }

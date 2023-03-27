@@ -392,3 +392,218 @@
     #   bpy.ops.image.save_as(filepath=path)
     #   #master_img.save(path)
     #   
+
+
+
+    //   {
+    //     "label": "ALL_BUILD_DEBUG",
+    //     "dependsOn": [
+    //       "CMAKE_BUILD_DEBUG",
+    //       "DOTNET_BUILD_DEBUG"
+    //     ],
+    //     "problemMatcher": [],
+    //     "presentation": {
+    //       "echo": true,
+    //       "reveal": "always",
+    //       "focus": false,
+    //       "panel": "shared",
+    //       "showReuseMessage": false,
+    //       "clear": true,
+    //       "close": false
+    //     },
+    //     "group": {
+    //       "kind": "build",
+    //     },
+    //   },
+    //   {
+    //     "label": "ALL_BUILD_RELEASE",
+    //     "dependsOn": [
+    //       "CMAKE_BUILD_RELEASE",
+    //       "DOTNET_BUILD_RELEASE"
+    //     ],
+    //     "problemMatcher": [],
+    //     "presentation": {
+    //       "echo": true,
+    //       "reveal": "always",
+    //       "focus": false,
+    //       "panel": "shared",
+    //       "showReuseMessage": false,
+    //       "clear": true,
+    //       "close": false
+    //     },
+    //     "group": {
+    //       "kind": "build",
+    //       "isDefault": true
+    //     },
+    //   },
+    //   {
+    //     "label": "ALL_CLEAN",
+    //     "type": "shell",
+    //     "command": "echo cleaning ${workspaceFolder}/; rm -rf ${workspaceFolder}/bin; rm -rf ${workspaceFolder}/obj; rm -rf ${workspaceFolder}/tmp; rm -rf ${workspaceFolder}/build",
+    //     "problemMatcher": [],
+    //     "presentation": {
+    //       "echo": true,
+    //       "reveal": "always",
+    //       "focus": false,
+    //       "panel": "shared",
+    //       "showReuseMessage": false,
+    //       "clear": false,
+    //       "close": false
+    //     }
+    //   },
+
+
+    // 
+// class MonoUtils {
+// public:
+//   static std::string compile_dll_default() {
+//     msg("Compiling DLL");
+//     msg("cwd=" + getcwd(NULL, 0));
+//     std::string dllname = "./bin/Debug/Test.dll";
+//     std::string cmd = "mcs -t:library -fullpaths";
+//     cmd = cmd + " -nologo -debug+ -debug:full -unsafe+ -optimize-";
+//     // not avail in mcs
+//     //-parallel+
+//     //-nullable+
+//     // cmd = cmd + " -nosdkpath";
+//     // cmd = cmd + " -nostdlib+";
+//     // cmd = cmd + " -embed";
+//     cmd = cmd + " -out:" + dllname;
+//     // cmd = cmd + " ./src/Test.cs";
+//     cmd = cmd + " ../Loft/src/*.cs";
+//     cmd = cmd + " /lib:" + "\"" + "/usr/lib/mono/4.8-api/Facades/" + "\"";
+//     cmd = cmd + " /lib:" + "\"" + "/usr/lib/mono/4.8-api/" + "\"";
+//     cmd = cmd + " /lib:" + "\"" + "../Loft/bin/Debug/net6.0/" + "\"";
+// 
+//     // cmd = cmd + " /r:" + "\"" + "mscorlib.dll" + "\"";
+// 
+//     cmd = cmd + " /r:" + "\"" + "System.dll" + "\"";
+//     cmd = cmd + " /r:" + "\"" + "System.Runtime.dll" + "\"";
+//     cmd = cmd + " /r:" + "\"" + "System.Collections.dll" + "\"";
+//     cmd = cmd + " /r:" + "\"" + "System.Collections.dll" + "\"";
+//     cmd = cmd + " /r:" + "\"" + "System.Linq.dll" + "\"";
+//     cmd = cmd + " /r:" + "\"" + "System.Console.dll" + "\"";
+//     cmd = cmd + " /r:" + "\"" + "System.Threading.dll" + "\"";
+//     cmd = cmd + " /r:" + "\"" + "System.Threading.ThreadPool.dll" + "\"";
+//     cmd = cmd + " /r:" + "\"" + "OpenTK.Windowing.GraphicsLibraryFramework.dll" + "\"";
+//     cmd = cmd + " /r:" + "\"" + "OpenTK.Windowing.Desktop.dll" + "\"";
+//     cmd = cmd + " /r:" + "\"" + "OpenTK.Windowing.Common.dll" + "\"";
+//     cmd = cmd + " /r:" + "\"" + "OpenTK.Graphics.dll" + "\"";
+//     cmd = cmd + " /r:" + "\"" + "OpenTK.Core.dll" + "\"";
+//     //  cmd = cmd + " /r:" + "\"" + "Loft.dll" + "\"";
+//     //
+//     // Path.Combine(Gu.ExePath, "Loft.dll"),
+//     msg("cmd=" + cmd);
+//     auto out = Gu::executeReadOutput(cmd);
+//     msg("Mono Compile Output: " + out);
+//     if (out.find("error") != std::string::npos) {
+//       msg("compile error. See output. Press Enter to Continue.");
+//       Gu::debugBreak();
+//     }
+//     return dllname;
+//   }
+// 
+//   static void init_mono(int argc, char** argv) {
+//     // std::string dllname = compile_dll_default();
+//     //  msg("cwd=" + getcwd(NULL, 0));
+// 
+//     std::string dllname = "/home/mario/git/Loft/bin/Debug/net6.0/Loft.dll";  // building with csc
+// 
+//     // issue is assembly references between mono and the Loft compiled in csc
+//     // getting lolft to compile in mcs seems also difficult as the files dont have hte correct api references as well
+// 
+//     // std::string cmd = "xbuild /p:Configuration=Debug ../Loft/Loft.csproj";
+//     // auto out = Gu::executeReadOutput(cmd);
+//     // msg("Mono Compile Output: " + out);
+//     // if (out.find("error") != std::string::npos) {
+//     //   msg("compile error. See output. Press Enter to Continue.");
+//     //   Gu::debugBreak();
+//     // }
+// 
+//     msg("Parsing config");
+//     mono_config_parse(NULL);
+//     
+//     LogInfo("configdir = " + mono_get_config_dir());
+//     ///home/mario/.vscode/extensions/ms-dotnettools.csharp-1.25.4-linux-x64/.razor/
+//     mono_set_dirs("/home/mario/.vscode/extensions/ms-dotnettools.csharp-1.25.4-linux-x64/.razor/","/etc/mono/config");
+//     LogInfo("configdir = " + mono_get_config_dir());
+//     // domain = mono_jit_init_version ("myapp", "v4.0.30319");
+//     MonoDomain* domain = mono_jit_init("main-domain");//, "v6.0"); //
+// 
+//     void* user_data = NULL;
+//     mono_runtime_exec_managed_code(domain, main_thread_handler, user_data);
+// 
+//     // msg("cwd=" + getcwd(NULL, 0));
+//     // msg("  Creating new domain, current heap used size: " + std::to_string(mono_gc_get_used_size()));
+//     // MonoDomain* temp_domain = mono_domain_create_appdomain((char*)"temp_domain", NULL);
+//     // if (!mono_domain_set(temp_domain, 0)) {
+//     //   throw Exception("  Failed to set the domain");
+//     // }
+//     msg("Loading assembly " + dllname);
+//     MonoAssembly* assembly = mono_domain_assembly_open(domain, dllname.c_str()); //mono_domain_get()
+//     if (!assembly) {
+//       throw Exception(" Assembly not found.");
+//     }
+//     auto retval = mono_jit_exec(domain, assembly, argc, argv);
+// 
+//     // find method
+//     //  Assemblies contain images. I'm not sure why you pass the filename if the assembly needs to be loaded anyway..?
+//     //  MonoMethod* method = find_static_method(dllname, "Loft", "MainClass", "Loft.MainClass:StartEngine_NoArgs()");
+//     //  MonoObject* exception = nullptr;
+//     //  MonoObject* result = mono_runtime_invoke(method, NULL, NULL, &exception);
+//     //  if (exception != nullptr) {
+//     //    mono_unhandled_exception (exception); //prints execption
+//     //   // throw Exception(" MyGame dll -> exception thrown: ??");  // How to get exception information from a MonoObject ?
+//     //  }
+//     // mono_free_method(method);
+// 
+//     mono_jit_cleanup(domain);
+// 
+//     mono_gc_collect(mono_gc_max_generation());
+//   }
+// 
+//   static MonoClass* get_class(const std::string& image_name, const std::string& namespace_name,
+//                               const std::string& class_name) {
+//     MonoImageOpenStatus status;
+//     MonoImage* mygame_image = mono_image_open(image_name.c_str(), &status);
+//     if (mygame_image == nullptr) {
+//       throw Exception("MyGame dll not found.");
+//     }
+//     MonoClass* className = mono_class_from_name(mygame_image, namespace_name.c_str(), class_name.c_str());
+//     mono_image_close(mygame_image);  // This appears to b
+//     return className;
+//   }
+//   static MonoMethod* find_static_method(const std::string& image_name, const std::string& namespace_name,
+//                                         const std::string& class_name, const std::string& methodname) {
+//     // MonoImageOpenStatus status;
+//     // MonoImage* mygame_image = mono_image_open(image_name.c_str(), &status);
+//     // if (mygame_image == nullptr) {
+//     //   errorExit("MyGame dll not found.");
+//     // }
+//     // MonoClass* className = mono_class_from_name(mygame_image, namespace_name.c_str(), class_name.c_str());
+//     // mono_image_close(mygame_image);  //This appears to be alright.
+// 
+//     MonoClass* className = get_class(image_name, namespace_name, class_name);
+// 
+//     std::string details = std::string() + " (image=" + image_name + " namespace=" + namespace_name + " class=" + class_name + ")";
+//     if (className == nullptr) {
+//       throw Exception(std::string() + "Could not get class" + details);
+//     }
+// 
+//     //[namespace.]classname:methodname[(args...)]
+// 
+//     MonoMethodDesc* desc;
+//     desc = mono_method_desc_new(methodname.c_str(), true);
+//     if (desc == nullptr) {
+//       throw Exception(std::string() + "Could not get method descriptor " + details);
+//     }
+//     MonoMethod* return_method = mono_method_desc_search_in_class(desc, className);
+//     mono_method_desc_free(desc);
+//     if (return_method == nullptr) {
+//       throw Exception("cound not locate Method: " + methodname);
+//     }
+//     msg("method found: " + mono_method_full_name(return_method, true));
+// 
+//     return return_method;
+//   }
+// };

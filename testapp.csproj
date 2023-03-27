@@ -1,0 +1,40 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net6.0</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
+    <ApplicationIcon>.\data\icon\icon.ico</ApplicationIcon>
+    <PackageIcon>icon.ico</PackageIcon>
+    <AssemblyVersion>1.0.0.1</AssemblyVersion>
+    <AppendTargetFrameworkToOutputPath>false</AppendTargetFrameworkToOutputPath> <!-- .Net6.0 -->
+    <AppendRuntimeIdentifierToOutputPath>true</AppendRuntimeIdentifierToOutputPath>    <!-- Debug/Release-->
+    <DefaultItemExcludes>$(DefaultItemExcludes);.\data\**\*.pattern</DefaultItemExcludes>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <Compile Remove=".\data\**" />
+    <EmbeddedResource Include=".\data\**" />
+    <None Remove=".\data\**" />
+    <Compile Include="..\Loft\src\*.cs" />
+    <Compile Remove="..\Loft\src\Program.cs" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Newtonsoft.Json" Version="13.0.3" />
+    <PackageReference Include="OpenTK" Version="4.7.5" />
+    <PackageReference Include="StbImageSharp" Version="2.27.13" />
+    <PackageReference Include="StbImageWriteSharp" Version="1.16.7" />
+    <PackageReference Include="StbTrueTypeSharp" Version="1.26.11" />
+    <PackageReference Include="StbVorbisSharp" Version="1.22.4" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <Reference Include="glTFLoader">
+      <HintPath>ext\glTFLoader.dll</HintPath>
+    </Reference>
+  </ItemGroup>
+
+</Project>
