@@ -3,171 +3,10 @@
 #ifndef __908357602394876023948723423TESTAPP_H__
 #define __908357602394876023948723423TESTAPP_H__
 
-#include <iostream>
-#include <string>
-#include <vector>
-#include <exception>
-#include <cstdarg>
-#include <filesystem>
-#include <map>
-#include <vector>
-#include <functional>
-#include <math.h>
-#include <memory>
-// #include <format>
+#include "./testapp_defines.h"
+#include "./gpu_structs.h"
 
-#include <GL/glew.h>
-#define GLFW_INCLUDE_NONE
-#include <GLFW/glfw3.h>
-#include <glm/ext.hpp>
-
-#ifdef __linux__
-// This gets the OS name
-#include <sys/utsname.h>
-// Sort of similar to windows GetLastError
-#include <sys/errno.h>
-#include <unistd.h>
-#include <sys/wait.h>
-#include <sys/prctl.h>
-#include <signal.h>
-#include <stdlib.h>
-#include <string.h>
-#include <stdio.h>
-#endif
-
-namespace std {
-
-std::string to_string(const char* __val);
-std::string to_string(const GLubyte* __val);
-
-}  // namespace std
-namespace glm {
-inline float clamp(float x, float _min, float _max) {
-  return glm::max(glm::min(x, _max), _min);
-}
-inline double clamp(double x, double _min, double _max) {
-  return glm::max(glm::min(x, _max), _min);
-}
-}  // namespace glm
 namespace B26D {
-
-#pragma region macros
-
-#ifdef _WIN32
-#define DLL_EXPORT __declspec(dllexport)
-#else
-#define DLL_EXPORT
-#endif
-#ifndef M_PI
-#define M_PI 3.14159265358979323846264338327950
-#endif
-#define OS_NOT_SUPPORTED #pragma message("OS not supported")
-
-#define LogDebug(msg) \
-  B26D::Log::dbg(std::string() + msg, __FILE__, __LINE__)
-#define LogInfo(msg) \
-  B26D::Log::inf(std::string() + msg, __FILE__, __LINE__)
-#define LogWarn(msg) \
-  B26D::Log::err(std::string() + msg, __FILE__, __LINE__)
-#define LogError(msg) \
-  B26D::Log::err(std::string() + msg, __FILE__, __LINE__)
-#define msg(msg) LogInfo(msg)
-
-#define Assert(__x)                                                       \
-  do {                                                                    \
-    if (!__x) {                                                           \
-      std::string str = std::string("Runtime Assertion Failed: ") + #__x; \
-      Log::print(str);                                                    \
-      B26D::Gu::debugBreak();                                             \
-      Raise(str);                                                         \
-    }                                                                     \
-  } while (0);
-
-#define Raise(__str) throw B26D::Exception(__FILE__, __LINE__, (__str))
-
-#define CheckErrorsRt() Gu::checkErrors(__FILE__, __LINE__)
-#ifdef _DEBUG
-#define CheckErrorsDbg() Gu::checkErrors(__FILE__, __LINE__)
-#else
-#define CheckErrorsDbg()
-#endif
-
-#pragma endregion
-#pragma region typedef
-
-typedef std::string string_t;
-typedef std::filesystem::path path_t;
-typedef glm::mat2 mat2;
-typedef glm::mat3 mat3;
-typedef glm::mat4 mat4;
-typedef glm::quat quat;
-typedef glm::vec2 vec2;
-typedef glm::vec3 vec3;
-typedef glm::vec4 vec4;
-typedef glm::ivec2 ivec2;
-typedef glm::ivec3 ivec3;
-typedef glm::ivec4 ivec4;
-typedef glm::uvec2 uvec2;
-typedef glm::uvec3 uvec3;
-typedef glm::uvec4 uvec4;
-
-#pragma endregion
-#pragma region forward decl
-
-class Log;
-class Window;
-class Exception;
-class Gu;
-class Image;
-class Shader;
-struct GpuQuad;
-struct GpuQuadVert;
-struct BinaryFile;
-class b2_objdata;
-class b2_action;
-class b2_frame;
-class b2_mtex;
-class BinaryFile;
-class Bobj;
-class Camera;
-class Component;
-class Texture;
-class VertexArray;
-class GpuBuffer;
-class AppConfig;
-class Scene;
-
-#pragma endregion
-#pragma region string extensions
-
-std::string operator+(const std::string& str, const char& rhs);
-std::string operator+(const std::string& str, const int8_t& rhs);
-std::string operator+(const std::string& str, const int16_t& rhs);
-std::string operator+(const std::string& str, const int32_t& rhs);
-std::string operator+(const std::string& str, const int64_t& rhs);
-std::string operator+(const std::string& str, const uint8_t& rhs);
-std::string operator+(const std::string& str, const uint16_t& rhs);
-std::string operator+(const std::string& str, const uint32_t& rhs);
-std::string operator+(const std::string& str, const uint64_t& rhs);
-std::string operator+(const std::string& str, const double& rhs);
-std::string operator+(const std::string& str, const float& rhs);
-std::string operator+(const std::string& str, const path_t& rhs);
-std::string operator+(const std::string& str, const vec2& rhs);
-std::string operator+(const std::string& str, const vec3& rhs);
-std::string operator+(const std::string& str, const vec4& rhs);
-std::string operator+(const std::string& str, const ivec2& rhs);
-std::string operator+(const std::string& str, const ivec3& rhs);
-std::string operator+(const std::string& str, const ivec4& rhs);
-std::string operator+(const std::string& str, const uvec2& rhs);
-std::string operator+(const std::string& str, const uvec3& rhs);
-std::string operator+(const std::string& str, const uvec4& rhs);
-std::string operator+(const std::string& str, const mat2& rhs);
-std::string operator+(const std::string& str, const mat3& rhs);
-std::string operator+(const std::string& str, const mat4& rhs);
-std::string operator+(const std::string& str, const path_t& rhs);
-
-#pragma endregion
-#pragma region classes
 
 class b2_objdata {
 public:
@@ -357,17 +196,73 @@ public:
   virtual ~Framebuffer();
 };
 class Shader : public GLObject {
+public:
+  enum class ShaderStage { Vertex,
+                           Geometry,
+                           Fragment };
+  enum class ShaderLoadState {
+    None,
+    CompilingShaders,
+    Success,
+    Failed,
+    MaxShaderLoadStates,
+  };
+
 private:
+  class Uniform {
+  public:
+    std::string _name = "";
+    int _location = -1;
+    int _sizeBytes = 0;
+    bool _active = false;
+    GLenum _type;
+    bool _hasBeenBound = false;
+    GLenum _rangeTarget;
+    GLenum _bufferTarget;
+    Uniform(std::string name, int location, int size, GLenum type, bool active) {
+      _name = name;
+      _location = location;
+      _sizeBytes = size;
+      _type = type;
+      _active = active;
+    }
+  };
+  class UniformBlock {
+  public:
+    std::string _name = "";
+    int _bindingIndex = -1;
+    int _bufferSizeBytes = 0;
+    bool _active = false;
+    bool _hasBeenBound = false;
+    GLenum _rangeTarget;
+    GLenum _bufferTarget;
+    UniformBlock(std::string name, int bind, int size, bool active) {
+      _name = name;
+      _bindingIndex = bind;
+      _bufferSizeBytes = size;
+      _active = active;
+    }
+  };
   std::vector<std::string> _vert_src;
   std::vector<std::string> _frag_src;
   std::vector<std::string> _geom_src;
 
-  static std::vector<std::string> loadSource(path_t& loc);
+  std::vector<std::unique_ptr<UniformBlock>> _uniformBlocks;
+  std::vector<std::unique_ptr<Uniform>> _uniforms;
+  std::string _name;
+  ShaderLoadState _state = ShaderLoadState::None;
+  int _maxBufferBindingIndex = 0;
+  void parseUniformBlocks();
+  void parseUniforms();
+  static std::string getHeader(ShaderStage);
+  static std::vector<std::string> loadSourceLines(path_t& loc, ShaderStage);
   static GLuint compileShader(GLenum type, std::vector<std::string>& src);
   static std::string getShaderInfoLog(GLuint prog);
   static std::string getProgramInfoLog(GLuint prog);
   static void printSrc(std::vector<std::string> src);
-  static std::string formatSrc(std::vector<std::string> src);
+  static std::string debugFormatSrc(std::vector<std::string> src);
+
+  void bindBlockFast(UniformBlock*, GpuBuffer*);
 
 public:
   void setCameraUfs(Camera* cam);
@@ -379,7 +274,7 @@ public:
 };
 class GpuBuffer : public GLObject {
 public:
-  GpuBuffer(size_t size, void* data, uint32_t flags = GL_DYNAMIC_STORAGE_BIT);
+  GpuBuffer(size_t size, void* data = nullptr, uint32_t flags = GL_DYNAMIC_DRAW);
   virtual ~GpuBuffer();
   void copyToGpu(size_t size, void* data, size_t offset = 0);
 };
@@ -474,15 +369,17 @@ public:
   virtual void update(float dt, mat4* parent = nullptr);
 };
 class Camera : public Bobj {
-  glm::mat4 _proj;
-  glm::mat4 _view;
   vec3 _lookat;
   float _fov = 40.0f;
   float _far = 1000.0f;
+  std::unique_ptr<GpuCamera> _gpudata;
+  std::unique_ptr<GpuBuffer> _buffer;
 
 public:
-  glm::mat4& proj() { return _proj; }
-  glm::mat4& view() { return _view; }
+  glm::mat4& proj();
+  glm::mat4& view();
+
+  GpuBuffer* uniformBuffer();
 
   Camera(string_t&& name);
   void updateViewport(int width, int height);
@@ -557,9 +454,8 @@ public:
 class AppConfig {
 public:
   bool BreakOnGLError = true;
+  bool Debug_Print_Shader_Uniform_Details_Verbose_NotFound = true;
 };
-
-#pragma endregion
 
 }  // namespace B26D
 

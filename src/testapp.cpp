@@ -2,6 +2,7 @@
 #include <sstream>
 #include <iterator>
 #include <numeric>
+#include <regex>
 #include "./testapp.h"
 #define STB_IMAGE_IMPLEMENTATION
 #include "stb_image.h"
@@ -114,6 +115,10 @@ int Gu::run(int argc, char** argv) {
       }
     }
   }
+  // catch (std::exception ex) {
+  // LogError("Caught std::exception " + ex.what());
+  //   throw ex;
+  // }
   catch (Exception ex) {
     Log::exception(ex);
     ret_code = 1;
@@ -340,22 +345,24 @@ std::unique_ptr<Image> Image::from_file(std::string path) {
 #pragma region Shader
 
 Shader::Shader(path_t vert_loc, path_t geom_loc, path_t frag_loc) {
+  _name = vert_loc.filename() + "_" + (geom_loc.empty() ? "" : (geom_loc.filename() + "_")) + frag_loc.filename();
+  _state = ShaderLoadState::CompilingShaders;
   _glId = glCreateProgram();
   Assert(Gu::exists(vert_loc));
   Assert(Gu::exists(frag_loc));
 
-  _vert_src = loadSource(vert_loc);
+  _vert_src = loadSourceLines(vert_loc, ShaderStage::Vertex);
   auto vert = compileShader(GL_VERTEX_SHADER, _vert_src);
   glAttachShader(_glId, vert);
 
-  _frag_src = loadSource(frag_loc);
+  _frag_src = loadSourceLines(frag_loc, ShaderStage::Fragment);
   auto frag = compileShader(GL_FRAGMENT_SHADER, _frag_src);
   glAttachShader(_glId, frag);
 
   GLuint geom = 0;
   if (!geom_loc.empty()) {
     Assert(Gu::exists(geom_loc));
-    _geom_src = loadSource(geom_loc);
+    _geom_src = loadSourceLines(geom_loc, ShaderStage::Geometry);
     geom = compileShader(GL_GEOMETRY_SHADER, _geom_src);
     glAttachShader(_glId, geom);
   }
@@ -369,6 +376,8 @@ Shader::Shader(path_t vert_loc, path_t geom_loc, path_t frag_loc) {
     printSrc(_vert_src);
     LogDebug(Shader::getProgramInfoLog(_glId));
     glDeleteProgram(_glId);
+    _state = ShaderLoadState::Failed;
+    // return;
     Raise("Failed to link program");
   }
   glDetachShader(_glId, vert);
@@ -376,7 +385,13 @@ Shader::Shader(path_t vert_loc, path_t geom_loc, path_t frag_loc) {
   if (geom) {
     glDetachShader(_glId, geom);
   }
+
+  parseUniformBlocks();
+  parseUniforms();
+
+  _state = ShaderLoadState::Success;
 }
+
 Shader::~Shader() {
   glDeleteProgram(_glId);
 }
@@ -386,7 +401,128 @@ void Shader::bind() {
 void Shader::unbind() {
   glUseProgram(0);
 }
-std::string Shader::formatSrc(std::vector<std::string> lines) {
+void Shader::parseUniforms() {
+  int u_count = 0;
+  glGetProgramiv(_glId, GL_ACTIVE_UNIFORMS, &u_count);
+  CheckErrorsRt();
+  for (auto i = 0; i < u_count; i++) {
+    GLenum u_type;
+    GLsizei u_size = 0;
+    string_t u_name = "DEADDEADDEADDEADDEADDEADDEADDEADDEADDEADDEADDEADDEADDEADDEADDEAD";  // idk.
+    int u_name_len = 0;
+
+    glGetActiveUniform(_glId, i, u_name.length(), &u_name_len, &u_size, &u_type, u_name.data());
+    CheckErrorsRt();
+    u_name = u_name.substr(0, u_name_len);
+    // glGetActiveUniformName(_glId, i,  );
+    // CheckErrorsRt();
+
+    if (u_name.find("[") != std::string::npos) {
+      // This is a unifrom block
+      continue;
+    }
+
+    bool active = true;
+    int location = glGetUniformLocation(_glId, u_name.c_str());
+
+    if (location < 0) {
+      active = false;
+      if (u_name.find('.') == std::string::npos) {
+        // There will be tons of inactive uniforms for structures. struct.name
+        // But for what we're doing if it isn't a structure it should be used.
+        Gu::debugBreak();
+      }
+      if (Gu::config()->Debug_Print_Shader_Uniform_Details_Verbose_NotFound) {
+        LogDebug(_name + ": .. Inactve uniform: " + u_name);
+      }
+      // Not necessarily an error
+      // GetUniformLocation "This function returns -1 if name does not correspond to an active uniform variable in program,
+      // if name starts with the reserved prefix "gl_", or if name is associated with an atomic counter or a named uniform block."
+      // Uniform variables that are structures or arrays of structures may be queried by calling glGetUniformLocation for each
+      // field within the structure. The array element operator "[]" and the structure field operator "." may be used in name in
+      // order to select elements within an array or fields within a structure. The result of using these operators is not allowed
+      // to be another structure, an array of structures, or a subcomponent of a vector or a matrix. Except if the last part of name
+      // indicates a uniform variable array, the location of the first element of an array can be retrieved by using the name of the
+      // array, or by using the name appended by "[0]".
+    }
+    else {
+      if (Gu::config()->Debug_Print_Shader_Uniform_Details_Verbose_NotFound) {
+        LogDebug(_name + ": .. Active uniform: " + u_name);
+      }
+    }
+
+    _uniforms.push_back(std::make_unique<Uniform>(u_name, location, u_size, u_type, active));
+  }
+}
+void Shader::parseUniformBlocks() {
+  int u_count = 0;
+  int u_block_count = 0;
+  glGetProgramiv(_glId, GL_ACTIVE_UNIFORMS, &u_count);
+  glGetProgramiv(_glId, GL_ACTIVE_UNIFORM_BLOCKS, &u_block_count);
+  CheckErrorsRt();
+  for (auto iBlock = 0; iBlock < u_block_count; iBlock++) {
+    int buffer_size_bytes = 0;
+    glGetActiveUniformBlockiv(_glId, iBlock, GL_UNIFORM_BLOCK_DATA_SIZE, &buffer_size_bytes);
+    CheckErrorsRt();
+
+    int binding = 0;
+    glGetActiveUniformBlockiv(_glId, iBlock, GL_UNIFORM_BLOCK_BINDING, &binding);
+    CheckErrorsRt();
+
+    std::string u_name = "DEADDEADDEADDEADDEADDEADDEADDEADDEADDEADDEADDEADDEADDEADDEADDEAD";  // idk.
+    int u_name_len = 0;
+    glGetActiveUniformBlockName(_glId, iBlock, u_name.length(), &u_name_len, u_name.data());
+    CheckErrorsRt();
+    u_name = u_name.substr(0, u_name_len);
+
+    bool active = true;
+    if (binding < 0) {
+      active = false;
+      if (Gu::config()->Debug_Print_Shader_Uniform_Details_Verbose_NotFound) {
+        LogDebug(_name + ": ..Inactive uniform block: " + u_name);
+      }
+    }
+    else {
+      if (Gu::config()->Debug_Print_Shader_Uniform_Details_Verbose_NotFound) {
+        LogDebug(_name + ": ..Active uniform block: " + u_name);
+      }
+
+      _maxBufferBindingIndex = glm::max(_maxBufferBindingIndex, binding);
+    }
+
+    _uniformBlocks.push_back(std::make_unique<UniformBlock>(u_name, binding, buffer_size_bytes, active));
+  }
+  // check duplicate binding indexes for blocks
+  for (int dupe_loc = 0; dupe_loc < _uniformBlocks.size(); dupe_loc++) {
+    for (int dupe_loc2 = dupe_loc + 1; dupe_loc2 < _uniformBlocks.size(); dupe_loc2++) {
+      auto ub0 = _uniformBlocks[dupe_loc].get();
+      auto ub1 = _uniformBlocks[dupe_loc2].get();
+
+      if (ub0->_bindingIndex == ub1->_bindingIndex) {
+        LogError("Duplicate Uniform buffer binding index " + ub0->_bindingIndex + " for " + ub0->_name + " and " + ub1->_name + "");
+      }
+      Gu::debugBreak();
+      _state = ShaderLoadState::Failed;
+    }
+  }
+}
+void Shader::bindBlockFast(UniformBlock* u, GpuBuffer* b) {
+  Assert(b != nullptr);
+  // Assert(b->_rangeTarget != nullptr);
+  glBindBufferBase(GL_UNIFORM_BUFFER, u->_bindingIndex, b->glId());  // GL_UNIFORM_BUFFER GL_SHADER_STO..
+  CheckErrorsDbg();
+  // if (_bufferTarget == BufferTarget.UniformBuffer) { RangeTarget = BufferRangeTarget.UniformBuffer; }
+  // else if (_bufferTarget == BufferTarget.ShaderStorageBuffer) { RangeTarget = BufferRangeTarget.ShaderStorageBuffer; }
+  // else if (_bufferTarget == BufferTarget.ArrayBuffer) { RangeTarget = null; }
+  // else if (_bufferTarget == BufferTarget.ElementArrayBuffer) { RangeTarget = null;
+  glBindBuffer(GL_UNIFORM_BUFFER, b->glId());
+  CheckErrorsDbg();
+  u->_hasBeenBound = true;
+
+  // u->_hasBeenCopiedInitially = b->CopyToGpuCalled;
+  // u->_hasBeenCopiedThisFrame = b->CopyToGpuCalledFrameId == Gu.Context.FrameStamp;
+}
+std::string Shader::debugFormatSrc(std::vector<std::string> lines) {
   std::ostringstream st;
   int iLine = 1;
   st << Log::cc_color(Log::CC_CYAN, true);
@@ -415,8 +551,53 @@ std::string Shader::getProgramInfoLog(GLuint prog) {
   std::string info = std::string(buf.begin(), buf.begin() + outlen);
   return info;
 }
-std::vector<std::string> Shader::loadSource(path_t& loc) {
+std::string Shader::getHeader(ShaderStage stage) {
+  return "head";
+}
+std::vector<std::string> Shader::loadSourceLines(path_t& loc, ShaderStage stage) {
   auto src = Gu::readFile(loc);
+  auto str_globals = Gu::readFile(Gu::assetpath("shader/globals.glsl"));
+  auto structs_raw = Gu::readFile(Gu::relpath("../src/gpu_structs.h"));
+
+  std::string c_shared = "//SHADER_SHARED";
+
+  auto da = structs_raw.find(c_shared);
+  Assert(da != string_t::npos);
+  da += c_shared.length();
+  auto db = structs_raw.find(c_shared, da);
+  Assert(db != string_t::npos);
+  auto strStructs = structs_raw.substr(da, db - da);
+  str_globals.append("\n");
+  str_globals.append(strStructs);
+  str_globals.append("\n");
+
+  // struct inputs
+  std::vector<std::string> def_structs;
+  std::string strBuffers = "";
+  std::regex rex("\\s*struct\\s+([a-zA-Z0-9_]+)[\\{\\s\\n]");
+  std::smatch matches;
+  auto res = std::regex_search(strStructs, matches, rex);
+  auto xxx = matches.length();
+  if (matches.length() > 0) {
+    def_structs.push_back(matches[1]);
+  }
+  int binding = 0;
+  for (auto& s : def_structs) {
+    std::string buftype = "";
+    buftype = "uniform";  // "buffer" << for ssbo
+    std::string ufName = "_uf" + s;
+    if (src.find(ufName) != std::string::npos) {
+      strBuffers.append("layout(std140, binding = " + std::to_string(binding++) + ") " + buftype + " " + ufName + "_Block {\n");
+      strBuffers.append("  " + s + " " + ufName + ";\n");
+      strBuffers.append("};\n");
+    }
+  }
+  str_globals.append(strBuffers);
+
+  // append headers
+  src = str_globals.append(src);
+
+  // break into lines.
   std::vector<std::string> lines;
   int last = 0;
   int next = -1;
@@ -434,16 +615,14 @@ std::vector<std::string> Shader::loadSource(path_t& loc) {
       break;
     }
   }
+
+  printSrc(lines);
+
   return lines;
 }
 GLuint Shader::compileShader(GLenum type, std::vector<std::string>& src_lines) {
   GLuint shader = glCreateShader(type);
-  // const char** arr = new const char*[src_lines.size()];
-  // for (auto i = 0; i < src_lines.size(); i++) {
-  //   arr[i] = src_lines[i].c_str();
-  // }
-  // glShaderSource(shader, (GLsizei)src_lines.size(), arr, NULL);
-  // delete[] arr;
+  // combine into string again..
   std::ostringstream imploded;
   std::copy(src_lines.begin(), src_lines.end(), std::ostream_iterator<std::string>(imploded, "\n"));
   std::string stt = imploded.str() + '\0';
@@ -467,7 +646,7 @@ GLuint Shader::compileShader(GLenum type, std::vector<std::string>& src_lines) {
     }
     std::string exinfo = "Failed to compile " + st + " shader \n";
     exinfo += "\n";
-    exinfo += formatSrc(src_lines);
+    exinfo += debugFormatSrc(src_lines);
     exinfo += "\n";
     exinfo += info;
     Raise(exinfo);
@@ -475,18 +654,25 @@ GLuint Shader::compileShader(GLenum type, std::vector<std::string>& src_lines) {
   return shader;
 }
 void Shader::printSrc(std::vector<std::string> lines) {
-  Log::print(formatSrc(lines), Log::CC_CYAN);
+  Log::print(debugFormatSrc(lines), Log::CC_CYAN);
 }
 void Shader::setCameraUfs(Camera* cam) {
   // msg("cam=\nproj\n" + cam->proj() + "\nview\n" + cam->view() + "\n\n");
 
-  auto proj_loc = glGetUniformLocation(_glId, "_projMatrix");
-  Assert(proj_loc == -1);
-  glProgramUniformMatrix4fv(_glId, proj_loc, 1, GL_FALSE, (GLfloat*)&cam->proj());
-
-  auto view_loc = glGetUniformLocation(_glId, "_viewMatrix");
-  Assert(view_loc == -1);
-  glProgramUniformMatrix4fv(_glId, view_loc, 1, GL_FALSE, (GLfloat*)&cam->view());
+  for (auto ite = _uniformBlocks.begin(); ite != _uniformBlocks.end(); ite++) {
+    if (ite->get()->_name == "_ufGpuCamera_Block") {
+      bindBlockFast(ite->get(), cam->uniformBuffer());
+    }
+  }
+  //
+  //
+  //   auto proj_loc = glGetUniformLocation(_glId, "_projMatrix");
+  //   Assert(proj_loc == -1);
+  //   glProgramUniformMatrix4fv(_glId, proj_loc, 1, GL_FALSE, (GLfloat*)&cam->proj());
+  //
+  //   auto view_loc = glGetUniformLocation(_glId, "_viewMatrix");
+  //   Assert(view_loc == -1);
+  //   glProgramUniformMatrix4fv(_glId, view_loc, 1, GL_FALSE, (GLfloat*)&cam->view());
 }
 void Shader::setTextureUf(Texture* tex, GLuint channel, string_t loc) {
   auto tex_loc1 = glGetUniformLocation(_glId, loc.c_str());
@@ -514,7 +700,7 @@ void VertexArray::unbind() {
 GpuBuffer::GpuBuffer(size_t size, void* data, uint32_t flags) {
   glCreateBuffers(1, &_glId);
   // glNamedBufferStorage(_glId, size, data, flags);//for immutable buffers
-  glNamedBufferData(_glId, size, data, GL_DYNAMIC_DRAW);
+  glNamedBufferData(_glId, size, data, flags);
   CheckErrorsDbg();
 }
 GpuBuffer::~GpuBuffer() {
@@ -550,20 +736,20 @@ void Texture::copyToGpu(int w, int h, void* data) {
 }
 void Texture::copyToGpu(int x, int y, int w, int h, void* data) {
   float mwidth = w, mheight = h;
-  int mlevels=0;
+  int mlevels = 0;
   while (mwidth > 1 && mheight > 1) {
-    mlevels ++;
-    mwidth /=2.0f;
-    mheight /=  2.0f;
+    mlevels++;
+    mwidth /= 2.0f;
+    mheight /= 2.0f;
   }
 
   glTextureStorage2D(_glId, mlevels, GL_RGBA8, w, h);
   glTextureSubImage2D(_glId, 0, 0, 0, w, h, GL_RGBA, GL_UNSIGNED_BYTE, (void*)data);
-  if(mlevels>1){
+  if (mlevels > 1) {
     glGenerateTextureMipmap(_glId);
   }
   glTextureParameteri(_glId, GL_TEXTURE_BASE_LEVEL, 0);
-  glTextureParameteri(_glId, GL_TEXTURE_MAX_LEVEL, mlevels-1);  // max(0, mips - 1));
+  glTextureParameteri(_glId, GL_TEXTURE_MAX_LEVEL, mlevels - 1);  // max(0, mips - 1));
   // TODO: mips
   glTextureParameterf(_glId, GL_TEXTURE_MIN_FILTER, GL_NEAREST);  // GL_LINEAR_MIPMAP_LINEAR);
   glTextureParameterf(_glId, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
@@ -590,6 +776,7 @@ void Input::addKeyEvent(int32_t key, bool press) {
   k._key = key;
   k._press = press;
   _key_events.push_back(k);
+  msg("key event " + key + " press=" + press);
 }
 bool Input::press(int key) {
   auto it = _keys.find(key);
@@ -639,13 +826,13 @@ void Input::update() {
 }
 
 DrawQuads::DrawQuads(uint32_t maxQuads) {
-  _shader = std::make_unique<Shader>(Gu::assetpath("shader/draw_quads.vs"), path_t(""), Gu::assetpath("/shader/draw_quads.fs"));
+  _shader = std::make_unique<Shader>(Gu::assetpath("shader/draw_quads.vs.glsl"), path_t(""), Gu::assetpath("/shader/draw_quads.fs.glsl"));
 
   GpuQuad q;
   q.zero();
   _quads = std::vector<GpuQuad>(maxQuads, q);
 
-  _vbo = std::make_unique<GpuBuffer>(sizeof(GpuQuad) * _quads.size(), nullptr, GL_DYNAMIC_STORAGE_BIT);
+  _vbo = std::make_unique<GpuBuffer>(sizeof(GpuQuad) * _quads.size());
   CheckErrorsDbg();
   auto inds = std::vector<uint32_t>();
   for (auto i = 0; i < _quads.size(); i++) {
@@ -656,7 +843,7 @@ DrawQuads::DrawQuads(uint32_t maxQuads) {
     inds.push_back(i * 4 + 3);
     inds.push_back(i * 4 + 2);
   }
-  _ibo = std::make_unique<GpuBuffer>(sizeof(uint32_t) * inds.size(), inds.data(), GL_DYNAMIC_STORAGE_BIT);
+  _ibo = std::make_unique<GpuBuffer>(sizeof(uint32_t) * inds.size(), inds.data(), GL_STATIC_DRAW);
   CheckErrorsDbg();
 
   GLuint v_idx = 0;
@@ -717,8 +904,8 @@ void DrawQuads::reset() {
 }
 void DrawQuads::draw(Camera* cam, Texture* tex) {
   copyToGpu();
-  _shader->setCameraUfs(cam);
   _shader->bind();
+  _shader->setCameraUfs(cam);
   _shader->setTextureUf(tex, 0, "_texture");
   _vao->bind();
   glDrawElements(GL_TRIANGLES, _index * 6, GL_UNSIGNED_INT, 0);
@@ -766,7 +953,7 @@ void DrawQuads::testMakeQuads() {
   }
 }
 
-Camera::Camera(string_t&& name) : Bobj(std::move(name)) {
+Camera::Camera(string_t&& name) : Bobj(std::move(name)), _gpudata(std::make_unique<GpuCamera>()), _buffer(std::make_unique<GpuBuffer>(sizeof(GpuCamera))) {
   // dummy vals.
   _pos = vec3(-5, 5, -5);
   lookAt(vec3(0, 0, 0));
@@ -774,7 +961,8 @@ Camera::Camera(string_t&& name) : Bobj(std::move(name)) {
 }
 void Camera::updateViewport(int width, int height) {
   _fov = glm::clamp(_fov, 0.1f, 179.9f);
-  _proj = glm::perspectiveFov(glm::radians(_fov), (float)width, (float)height, 1.0f, _far);
+  _gpudata->_proj = glm::perspectiveFov(glm::radians(_fov), (float)width, (float)height, 1.0f, _far);
+  _buffer->copyToGpu(sizeof(GpuCamera), _gpudata.get());
   //_view = glm::lookAt(vec3(10,10,10),vec3(0,0,0), vec3(0,1,0));
 }
 void Camera::lookAt(vec3&& at) {
@@ -782,9 +970,15 @@ void Camera::lookAt(vec3&& at) {
 }
 void Camera::update(float dt, mat4* parent) {
   Bobj::update(dt, parent);
-  _view = glm::lookAt(_pos, _lookat, _up);
+  _gpudata->_view = _world;  // glm::lookAt(_pos, _lookat, _up);
   // todo update basis vectors
+  // msg("forward="+forward());
+  // msg("up="+up());
+  // msg("right="+right());
 }
+glm::mat4& Camera::proj() { return _gpudata->_proj; }
+glm::mat4& Camera::view() { return _gpudata->_view; }
+GpuBuffer* Camera::uniformBuffer() { return _buffer.get(); }
 
 Bobj::Bobj(string_t&& name) {
   _id = s_idgen++;
@@ -800,8 +994,8 @@ void Bobj::update(float dt, mat4* parent) {
 
   // compile mat
   _world = parent ? *parent : mat4(1);
-  _world = glm::translate(_world, _pos);
   _world = _world * glm::mat4_cast(_rot);
+  _world = glm::translate(_world, _pos);
   _world = glm::scale(_world, _scl);
 
   // basis
@@ -823,6 +1017,7 @@ void InputController::update(Bobj* obj, float delta) {
     return;
   }
 
+  float ang = (float)(M_PI * 2.0) * obj->rspeed() * delta;
   auto inp = ct->input();
   auto spdmul = inp->pressOrDown(GLFW_KEY_LEFT_SHIFT) || inp->pressOrDown(GLFW_KEY_RIGHT_SHIFT) ? 5.0f : 1.0f;
   if (inp->pressOrDown(GLFW_KEY_UP) || inp->pressOrDown(GLFW_KEY_W)) {
@@ -832,15 +1027,10 @@ void InputController::update(Bobj* obj, float delta) {
     obj->pos() -= obj->forward() * obj->speed() * spdmul * delta;
   }
   if (inp->pressOrDown(GLFW_KEY_LEFT) || inp->pressOrDown(GLFW_KEY_A)) {
-    float ang = (float)(M_PI * 2.0) * obj->rspeed() * delta;
-    obj->rot() = glm::rotate(obj->rot(), ang, obj->up());
+    obj->rot() = glm::rotate(obj->rot(), -ang, obj->up());
   }
   if (inp->pressOrDown(GLFW_KEY_RIGHT) || inp->pressOrDown(GLFW_KEY_D)) {
-    float ang = (float)(M_PI * 2.0) * obj->rspeed() * delta;
     obj->rot() = glm::rotate(obj->rot(), ang, obj->up());
-    // glm::mat4 m(1.0);
-    // m = glm::rotate(m, (float)(M_PI * 2.0) * -obj->_rspeed * delta, _up);
-    //_heading = glm::normalize(glm::vec3(m * glm::vec4(_heading, 1)));
   }
 }
 
@@ -924,7 +1114,9 @@ Window::Window(int w, int h, std::string title, GLFWwindow* share) {
     auto mw = Gu::getWindow(win);
     Assert(mw);
     Assert(mw->_input);
-    mw->_input->addKeyEvent(key, action == GLFW_PRESS);
+    if (action == GLFW_PRESS || action == GLFW_RELEASE) {
+      mw->_input->addKeyEvent(key, action == GLFW_PRESS);
+    }
   });
   glfwSetFramebufferSizeCallback(
       _window, [](auto win, auto w, auto h) {
