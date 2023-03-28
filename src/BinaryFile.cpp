@@ -1,7 +1,7 @@
 #include <fstream>
 #include "./BinaryFile.h"
 
-namespace TestApp {
+namespace B26D {
 
 #pragma region BinaryFile : Methods
 BinaryFile::BinaryFile() {
@@ -134,30 +134,14 @@ int32_t BinaryFile::get() {
   }
   return (int32_t)(*(getData().data() + iFilePos++));
 }
-bool BinaryFile::loadFromDisk(const string_t& fileLoc, bool bAddNull) {
+bool BinaryFile::loadFromDisk(const path_t& fileLoc, bool bAddNull) {
   return loadFromDisk(fileLoc, 0, -1, bAddNull);
 }
-bool BinaryFile::loadFromDisk(const string_t& fileLoc, size_t offset, int64_t length, bool bAddNull) {
+bool BinaryFile::loadFromDisk(const path_t& fileLoc, size_t offset, int64_t length, bool bAddNull) {
   rewind();
 
-  LogInfo("Reading File " + fileLoc);
-
-  std::fstream fs;
-  fs.open(fileLoc.c_str(), std::ios::in | std::ios::binary);
-  if (!fs.good()) {
-    fs.close();
-    throw Exception("Could not open file '" + fileLoc + "' for read.");
-  }
-
-  size_t size_len;
-  fs.seekg(0, std::ios::end);
-  size_len = (size_t)fs.tellg();
-  fs.seekg(0, std::ios::beg);
-
-  _data.resize(size_len + 1);
-  fs.read(_data.data(), size_len);
-
-  *(getData().data() + size_len) = 0;
+  auto str = Gu::readFile(fileLoc);
+  std::copy(str.begin(), str.end(), std::back_inserter(_data));
 
   return true;
 }
@@ -316,7 +300,7 @@ void BinaryFile::readMat4(glm::mat4& val, size_t offset) {
 }
 void BinaryFile::readString(std::string& val, size_t offset) {
   int32_t iStringLen = 0;
-  readInt32(iStringLen); 
+  readInt32(iStringLen);
 
   if (iStringLen > 0) {
     char* buf = new char[iStringLen + 1];
@@ -339,7 +323,7 @@ int BinaryFile::read(const char* buf, size_t count, size_t bufcount, size_t offs
   Assert((offset >= 0) || (offset == memsize_max));
 
   if (count > bufcount) {
-    throw Exception("DataBuffer - out of bounds.");
+    Raise("DataBuffer - out of bounds.");
   }
   if (offset == memsize_max) {
     offset = 0;
@@ -439,7 +423,7 @@ int BinaryFile::write(const char* buf, size_t count, size_t bufcount, size_t off
   Assert((offset >= 0) || (offset == memsize_max));
 
   if (count > bufcount) {
-    throw Exception("DataBuffer - out of bounds.");
+    Raise("DataBuffer - out of bounds.");
   }
   if (offset == memsize_max) {
     offset = 0;
@@ -457,4 +441,4 @@ int BinaryFile::write(const char* buf, size_t count, size_t bufcount, size_t off
 
 #pragma endregion
 
-}  // namespace TestApp
+}  // namespace B26D

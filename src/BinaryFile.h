@@ -5,7 +5,7 @@
 
 #include "./testapp.h"
 
-namespace TestApp {
+namespace B26D {
 /**
  *  @class BinaryFile
  *  @brief Binary parsed file which is loaded into a static buffer in memory via the memory manager.
@@ -91,8 +91,8 @@ public:
   void write(const char* buf, size_t bufsiz, size_t offset = memsize_max);
 
   //- File Operations
-  bool loadFromDisk(const string_t& fileLoc, bool bAddNull = false);                                 // - Read the whole file into the buffer.
-  bool loadFromDisk(const string_t& fileLoc, size_t offset, int64_t length, bool bAddNull = false);  // - Read a part of the file.
+  bool loadFromDisk(const path_t& fileLoc, bool bAddNull = false);                                 // - Read the whole file into the buffer.
+  bool loadFromDisk(const path_t& fileLoc, size_t offset, int64_t length, bool bAddNull = false);  // - Read a part of the file.
   bool writeToDisk(const string_t& fileLoc);                                                         // - Read a part of the file.
 
   std::string toString();

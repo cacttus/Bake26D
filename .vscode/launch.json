@@ -14,33 +14,32 @@
     //cant mix mode debug here.
     //https://github.com/OmniSharp/omnisharp-vscode/issues/3068
     //cppvsdbg
+    // {
+    //   "name": "C# Debug",
+    //   "type": "coreclr",
+    //   "request": "launch",
+    //   "preLaunchTask": "BUILD_ALL_DEBUG", //BUILD_ALL_DEBUG
+    //   "program": "${workspaceFolder}/bin/Debug/testapp.dll",
+    //   "args": [],
+    //   "cwd": "${workspaceFolder}",
+    //   "console": "internalConsole", //internalConsole, externalTerminal
+    //   "enableStepFiltering": false,
+    //   "stopAtEntry": false,
+    // },
+    // {
+    //   "name": "C# Release",
+    //   "type": "coreclr",
+    //   "request": "launch",
+    //   "preLaunchTask": "BUILD_ALL_RELEASE",
+    //   "program": "${workspaceFolder}/bin/Release/testapp.dll",
+    //   "args": [],
+    //   "cwd": "${workspaceFolder}",
+    //   "console": "internalConsole", //internalConsole, externalTerminal
+    //   "enableStepFiltering": false,
+    //   "stopAtEntry": false,
+    // },
     {
-      "name": "C# testapp Debug",
-      "type": "coreclr",
-      "request": "launch",
-      "preLaunchTask": "BUILD_ALL_DEBUG", //BUILD_ALL_DEBUG
-      "program": "${workspaceFolder}/bin/Debug/testapp.dll",
-      "args": [],
-      "cwd": "${workspaceFolder}",
-      "console": "internalConsole", //internalConsole, externalTerminal
-      "enableStepFiltering": false,
-      "stopAtEntry": false,
-     ,
-    },
-    {
-      "name": "C# testapp Release",
-      "type": "coreclr",
-      "request": "launch",
-      "preLaunchTask": "BUILD_ALL_RELEASE",
-      "program": "${workspaceFolder}/bin/Release/testapp.dll",
-      "args": [],
-      "cwd": "${workspaceFolder}",
-      "console": "internalConsole", //internalConsole, externalTerminal
-      "enableStepFiltering": false,
-      "stopAtEntry": false,
-    },
-    {
-      "name": "C++ testapp Debug BUILD",
+      "name": "C++ Debug",
       "type": "cppdbg",
       "request": "launch",
       "preLaunchTask": "CMAKE_BUILD_DEBUG",
@@ -59,7 +58,7 @@
       ]
     },
     {
-      "name": "C++ testapp Release  BUILD",
+      "name": "C++ Release",
       "type": "cppdbg",
       "request": "launch",
       "preLaunchTask": "CMAKE_BUILD_RELEASE",

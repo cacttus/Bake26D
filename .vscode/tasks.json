@@ -17,7 +17,7 @@
       "command": "${workspaceFolder}/build.sh debug",
       "group": {
         "kind": "build",
-        "isDefault": true
+        "isDefault": false
       },
     },
     {
@@ -47,7 +47,10 @@
           // Do not generate summary otherwise it leads to duplicate errors in Problems panel
           "/consoleloggerparameters:NoSummary",
         ],
-        "group": "build",
+        "group": {
+          "kind": "build",
+          "isDefault": false
+        },
         "presentation": {
           "echo": true,
           "reveal": "always",
@@ -72,7 +75,10 @@
           // Do not generate summary otherwise it leads to duplicate errors in Problems panel
           "/consoleloggerparameters:NoSummary",
         ],
-        "group": "build",
+        "group": {
+          "kind": "build",
+          "isDefault": false
+        },
         "presentation": {
           "echo": true,
           "reveal": "always",
@@ -118,7 +124,7 @@
         "CMAKE_CONFIGURE_DEBUG"
       ],
       "type": "shell",
-      "command": "cmake --build ./build -v -t all -j ",
+      "command": "cmake --build ./build --config Debug -v -t all -j ",
       "presentation": {
         "echo": true,
         "reveal": "always",
@@ -145,7 +151,7 @@
       },
       "group": {
         "kind": "build",
-        "isDefault": "true"
+        "isDefault": true
       }
     },
     {
@@ -154,7 +160,7 @@
         "CMAKE_CONFIGURE_RELEASE"
       ],
       "type": "shell",
-      "command": "cmake --build ./build -v -t all -j",
+      "command": "cmake --build ./build --config Release -v -t all -j",
       "linux": "",
       "options": {
         "shell": {}
@@ -184,7 +190,10 @@
           "message": 5
         },
       },
-      "group": "build",
+      "group": {
+        "kind": "build",
+        "isDefault": false
+      },
     },
   ]
 }

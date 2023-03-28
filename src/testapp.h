@@ -16,13 +16,10 @@
 #include <memory>
 // #include <format>
 
-// #include <GL/gl.h>
 #include <GL/glew.h>
 #define GLFW_INCLUDE_NONE
 #include <GLFW/glfw3.h>
 #include <glm/ext.hpp>
-// #include <glm/glm.hpp>
-
 
 #ifdef __linux__
 // This gets the OS name
@@ -38,6 +35,24 @@
 #include <stdio.h>
 #endif
 
+namespace std {
+
+std::string to_string(const char* __val);
+std::string to_string(const GLubyte* __val);
+
+}  // namespace std
+namespace glm {
+inline float clamp(float x, float _min, float _max) {
+  return glm::max(glm::min(x, _max), _min);
+}
+inline double clamp(double x, double _min, double _max) {
+  return glm::max(glm::min(x, _max), _min);
+}
+}  // namespace glm
+namespace B26D {
+
+#pragma region macros
+
 #ifdef _WIN32
 #define DLL_EXPORT __declspec(dllexport)
 #else
@@ -46,58 +61,162 @@
 #ifndef M_PI
 #define M_PI 3.14159265358979323846264338327950
 #endif
-
-namespace std {
-
-std::string to_string(const char* __val);
-std::string to_string(const GLubyte* __val);
-
-}  // namespace std
+#define OS_NOT_SUPPORTED #pragma message("OS not supported")
 
 #define LogDebug(msg) \
-  TestApp::Log::dbg(std::string() + msg)
+  B26D::Log::dbg(std::string() + msg, __FILE__, __LINE__)
 #define LogInfo(msg) \
-  TestApp::Log::inf(std::string() + msg)
+  B26D::Log::inf(std::string() + msg, __FILE__, __LINE__)
 #define LogWarn(msg) \
-  TestApp::Log::err(std::string() + msg)
+  B26D::Log::err(std::string() + msg, __FILE__, __LINE__)
 #define LogError(msg) \
-  TestApp::Log::err(std::string() + msg)
+  B26D::Log::err(std::string() + msg, __FILE__, __LINE__)
 #define msg(msg) LogInfo(msg)
 
-#define Assert(__x)                                        \
-  do {                                                     \
-    if (!__x) {                                            \
-      TestApp::Gu::debugBreak();                           \
-      throw TestApp::Exception("Assertion Failed: " #__x); \
-    }                                                      \
+#define Assert(__x)                                                       \
+  do {                                                                    \
+    if (!__x) {                                                           \
+      std::string str = std::string("Runtime Assertion Failed: ") + #__x; \
+      Log::print(str);                                                    \
+      B26D::Gu::debugBreak();                                             \
+      Raise(str);                                                         \
+    }                                                                     \
   } while (0);
 
+#define Raise(__str) throw B26D::Exception(__FILE__, __LINE__, (__str))
 
-namespace TestApp{
+#define CheckErrorsRt() Gu::checkErrors(__FILE__, __LINE__)
+#ifdef _DEBUG
+#define CheckErrorsDbg() Gu::checkErrors(__FILE__, __LINE__)
+#else
+#define CheckErrorsDbg()
+#endif
 
-typedef std::string string_t ; 
+#pragma endregion
+#pragma region typedef
+
+typedef std::string string_t;
+typedef std::filesystem::path path_t;
+typedef glm::mat2 mat2;
+typedef glm::mat3 mat3;
+typedef glm::mat4 mat4;
+typedef glm::quat quat;
+typedef glm::vec2 vec2;
+typedef glm::vec3 vec3;
+typedef glm::vec4 vec4;
+typedef glm::ivec2 ivec2;
+typedef glm::ivec3 ivec3;
+typedef glm::ivec4 ivec4;
+typedef glm::uvec2 uvec2;
+typedef glm::uvec3 uvec3;
+typedef glm::uvec4 uvec4;
+
+#pragma endregion
+#pragma region forward decl
 
 class Log;
-class MainWindow;
+class Window;
 class Exception;
 class Gu;
 class Image;
-struct RenderQuad;
+class Shader;
+struct GpuQuad;
+struct GpuQuadVert;
 struct BinaryFile;
-struct QuadVert;
-class b2_obj;
+class b2_objdata;
 class b2_action;
 class b2_frame;
-class b2_tex;
+class b2_mtex;
+class BinaryFile;
+class Bobj;
+class Camera;
+class Component;
+class Texture;
+class VertexArray;
+class GpuBuffer;
+class AppConfig;
+class Scene;
 
-struct QuadVert {
+#pragma endregion
+#pragma region string extensions
+
+std::string operator+(const std::string& str, const char& rhs);
+std::string operator+(const std::string& str, const int8_t& rhs);
+std::string operator+(const std::string& str, const int16_t& rhs);
+std::string operator+(const std::string& str, const int32_t& rhs);
+std::string operator+(const std::string& str, const int64_t& rhs);
+std::string operator+(const std::string& str, const uint8_t& rhs);
+std::string operator+(const std::string& str, const uint16_t& rhs);
+std::string operator+(const std::string& str, const uint32_t& rhs);
+std::string operator+(const std::string& str, const uint64_t& rhs);
+std::string operator+(const std::string& str, const double& rhs);
+std::string operator+(const std::string& str, const float& rhs);
+std::string operator+(const std::string& str, const path_t& rhs);
+std::string operator+(const std::string& str, const vec2& rhs);
+std::string operator+(const std::string& str, const vec3& rhs);
+std::string operator+(const std::string& str, const vec4& rhs);
+std::string operator+(const std::string& str, const ivec2& rhs);
+std::string operator+(const std::string& str, const ivec3& rhs);
+std::string operator+(const std::string& str, const ivec4& rhs);
+std::string operator+(const std::string& str, const uvec2& rhs);
+std::string operator+(const std::string& str, const uvec3& rhs);
+std::string operator+(const std::string& str, const uvec4& rhs);
+std::string operator+(const std::string& str, const mat2& rhs);
+std::string operator+(const std::string& str, const mat3& rhs);
+std::string operator+(const std::string& str, const mat4& rhs);
+std::string operator+(const std::string& str, const path_t& rhs);
+
+#pragma endregion
+#pragma region classes
+
+class b2_objdata {
+public:
+  int32_t _id = -1;
+  std::string _name = "";
+  std::vector<b2_action> _actions;
+  void deserialize(BinaryFile* bf);
+};
+class b2_action {
+public:
+  int32_t _id = -1;
+  std::string _name = "";
+  std::vector<b2_frame> _frames;
+  void deserialize(BinaryFile* bf);
+};
+class b2_frame {
+public:
+  float _seq = -1;
+  std::string _name = "";
+  int32_t _texid = -1;
+  int32_t _x = -1;
+  int32_t _y = -1;
+  int32_t _w = -1;
+  int32_t _h = -1;
+  void deserialize(BinaryFile* bf);
+};
+class b2_mtex {
+public:
+  int32_t _texid = -1;
+  std::vector<std::string> _images;
+  void deserialize(BinaryFile* bf);
+};
+// #define PixelSize = 1.0f/4.0f //1/4 meter - do in shader
+struct GpuSpriteData {
+  uint32_t _texId;  // normal or color
+  uvec4 _quad;      // quad in texture
+  mat4 _model;
+};
+struct GpuSpriteVertex {
+  uint32_t _id;
+};
+struct GpuQuadVert {
   glm::vec3 _v;
-  float _pd;
+  uint32_t _id;
   glm::vec2 _x;
   glm::vec4 _c;
 };
-struct RenderQuad {
-  QuadVert _verts[4];
+struct GpuQuad {
+  GpuQuadVert _verts[4];
   // TODO: model matrix
   void translate(glm::vec3 off) {
     for (auto& v : _verts) {
@@ -110,15 +229,29 @@ struct RenderQuad {
       v._v = (v._v - c) * scl + c;
     }
   }
+  void zero();
 };
 class Exception {
   std::string _what = "";
+  const char* _file;
+  int _line;
 
 public:
-  Exception(std::string what) { _what = what; }
-  std::string toString() { return _what; }
+  const char* file() { return _file; }
+  int line() { return _line; }
+  std::string what() { return _what; }
+  Exception(const char* file, int line, std::string what) {
+    _file = file;
+    _line = line;
+    _what = what;
+  }
 };
+
 class Log {
+private:
+  static void _output(std::string color, bool bold, std::string type, const char* file, int line, std::string s);
+  static std::string _header(std::string color, bool bold, std::string type, const char* file, int line);
+
 public:
   static std::string CC_BLACK;
   static std::string CC_RED;
@@ -130,47 +263,55 @@ public:
   static std::string CC_WHITE;
   static std::string CC_NORMAL;
 
-  static std::string cc_reset() { return "\033[0m"; }
-  static std::string cc_color(std::string color, bool bold) { return std::string()+"\033[" + (bold ? "1;" : "") + color + "m" ; }
-  static void err(std::string s) { _output(CC_RED, false, "E", s); }
-  static void dbg(std::string s) { _output(CC_CYAN, false, "D", s); }
-  static void inf(std::string s) { _output(CC_WHITE, false, "I", s); }
-  static void exception(Exception ex) {
-    err(ex.toString());
-    auto tbout = cc_color(CC_WHITE, true) + std::string(ex.toString()) + cc_reset();
-    _print(tbout);
-  }
-  static void _output(std::string color, bool bold, std::string type, std::string s) {
-    s = _header(color, bold, type) + s + cc_reset();
-    _print(s);
-  }
-  static void _print(std::string s) { std::cout << s << std::endl; }
-  static std::string _header(std::string color, bool bold, std::string type) {
-    // secs = time(NULL) - Log::_start_time
-    // dt = str(datetime.timedelta(seconds=secs))
-    return cc_color(color, bold) + "[" + type + "] ";
-  }
+  static void err(std::string s, const char* file, int line);
+  static void dbg(std::string s, const char* file, int line);
+  static void inf(std::string s, const char* file, int line);
+  static void exception(Exception ex);
+  static void print(std::string s);
+  static void print(std::string s, std::string color, bool bold = false);
+  static std::string cc_reset();
+  static std::string cc_color(std::string color, bool bold);
 };
 
 class Gu {
+  static path_t _appPath;
+  static path_t _assetsPath;
+  static Window* _context;
+  static std::unique_ptr<AppConfig> _appConfig;
+  static std::map<GLFWwindow*, std::unique_ptr<Window>> _windows;
+
 public:
-  static std::filesystem::path relpath(std::string rel);
-  static bool exists(std::filesystem::path path);
-  static std::filesystem::path app_path;
-  static auto createShader(std::string vert_src, std::string geom_src, std::string frag_src);
-  static auto compileShader(GLenum type, std::string src);
-  static void checkErrors();
-  static auto createTexture(std::filesystem::path fileloc);
-  static std::string printDebugMessages();
+  static Window* createWindow(int w, int h, std::string title);
+  static Window* getWindow(GLFWwindow* win);
+  static AppConfig* config() { return _appConfig.get(); }
+  static Window* currentContext() { return _context; }
+  static std::string pad(std::string st, int width, char padchar = '0');
+  static void initGlobals(std::string exe_path);
+  static path_t relpath(std::string rel);
+  static path_t assetpath(std::string rel);
+  static bool exists(path_t path);
+  static void checkErrors(const char* file, int line);
+  static auto createTexture(path_t fileloc);
+  static int printDebugMessages(string_t&);
   static std::string getShaderInfoLog(GLint prog);
   static std::string getProgramInfoLog(GLint prog);
   static void rtrim(std::string& s);
   static GLint glGetInteger(GLenum arg);
-  static float shitrand(float a, float b) { return (((float)a) + (((float)rand() / (float)(RAND_MAX))) * (((float)b) - ((float)a))); }
+  static float random(float a, float b) { return (((float)a) + (((float)rand() / (float)(RAND_MAX))) * (((float)b) - ((float)a))); }
   static void debugBreak();
   static uint64_t getMicroSeconds();
   static uint64_t getMilliSeconds();
   static std::string executeReadOutput(const std::string& cmd);
+  static std::string readFile(path_t fileLoc);
+  static int run(int argc, char** argv);
+};
+
+class GLObject {
+protected:
+  GLuint _glId;
+
+public:
+  GLuint glId() { return _glId; }
 };
 class Image {
 private:
@@ -197,15 +338,229 @@ public:
   }
   static std::unique_ptr<Image> from_file(std::string path);
 };
+class Texture : public GLObject {
+public:
+  Texture();
+  Texture(Image* img, bool mipmaps = false);
+  virtual ~Texture();
 
+  static std::unique_ptr<Texture> singlePixel(vec4 color);
 
+  void copyToGpu(int w, int h, void* data);
+  void copyToGpu(int x, int y, int w, int h, void* data);
+  void bind(int32_t channel);
+  void unbind(int32_t channel);
+};
+class Framebuffer : public GLObject {
+public:
+  Framebuffer();
+  virtual ~Framebuffer();
+};
+class Shader : public GLObject {
+private:
+  std::vector<std::string> _vert_src;
+  std::vector<std::string> _frag_src;
+  std::vector<std::string> _geom_src;
 
+  static std::vector<std::string> loadSource(path_t& loc);
+  static GLuint compileShader(GLenum type, std::vector<std::string>& src);
+  static std::string getShaderInfoLog(GLuint prog);
+  static std::string getProgramInfoLog(GLuint prog);
+  static void printSrc(std::vector<std::string> src);
+  static std::string formatSrc(std::vector<std::string> src);
 
+public:
+  void setCameraUfs(Camera* cam);
+  void setTextureUf(Texture* tex, GLuint index, string_t loc);
+  void bind();
+  void unbind();
+  Shader(path_t vert_src, path_t geom_src, path_t frag_src);
+  ~Shader();
+};
+class GpuBuffer : public GLObject {
+public:
+  GpuBuffer(size_t size, void* data, uint32_t flags = GL_DYNAMIC_STORAGE_BIT);
+  virtual ~GpuBuffer();
+  void copyToGpu(size_t size, void* data, size_t offset = 0);
+};
+class VertexArray : public GLObject {
+public:
+  VertexArray();
+  virtual ~VertexArray();
+  void bind();
+  void unbind();
+};
+class DrawQuads {
+private:
+  std::vector<GpuQuad> _quads;
+  std::unique_ptr<VertexArray> _vao;
+  std::unique_ptr<GpuBuffer> _vbo;
+  std::unique_ptr<GpuBuffer> _ibo;
+  std::unique_ptr<Shader> _shader;
+  size_t _index = 0;
+  bool _dirty = true;
 
+public:
+  Shader* shader() { return _shader.get(); }
+  VertexArray* vao() { return _vao.get(); }
+  std::vector<GpuQuad>& quads() { return _quads; }
 
+  DrawQuads(uint32_t maxQuads = 1024);
+  virtual ~DrawQuads();
+  void copyToGpu();
+  void draw(Camera* cm, Texture* color);
+  GpuQuad* getQuad();
+  void testMakeQuads();
+  void reset();
+};
+class Input {
+private:
+  enum class KeyState {
+    Up,
+    Press,
+    Down,
+    Release,
+  };
+  struct KeyEvent {
+    int _key = 0;
+    bool _press = false;
+  };
+  std::map<int, KeyState> _keys;
+  std::vector<KeyEvent> _key_events;
 
+public:
+  Input();
+  virtual ~Input();
+  void update();
+  void addKeyEvent(int32_t key, bool press);
+  bool pressOrDown(int key);
+  bool press(int key);
+};
 
-}//ns testapp
+class Bobj {
+  static uint64_t s_idgen;
+  uint64_t _id;
+  string_t _name;
 
+protected:
+  vec3 _pos = vec3(0, 0, 0);
+  quat _rot = quat(0, 0, 0, 1);
+  vec3 _scl = vec3(1, 1, 1);
+  float _speed = 10;     // 1;
+  float _rspeed = 0.5f;  // 0.5f;
+  glm::mat4 _world = mat4(1);
+  glm::vec3 _right = vec3(1, 0, 0);
+  glm::vec3 _up = vec3(0, 1, 0);
+  glm::vec3 _forward = vec3(0, 0, 1);
+  std::vector<std::unique_ptr<Component>> _components;
+  std::vector<std::unique_ptr<Bobj>> _children;
+
+public:
+  uint64_t id() { return _id; }
+  string_t& name() { return _name; }
+  glm::vec3& up() { return _up; }
+  glm::vec3& right() { return _right; }
+  glm::vec3& forward() { return _forward; }
+  glm::mat4& world() { return _world; }
+  glm::vec3& pos() { return _pos; }
+  glm::quat& rot() { return _rot; }
+  glm::vec3& scl() { return _scl; }
+  std::vector<std::unique_ptr<Bobj>>& children() { return _children; }
+  float& speed() { return _speed; }
+  float& rspeed() { return _rspeed; }
+  std::vector<std::unique_ptr<Component>>& components() { return _components; }
+
+  Bobj(string_t&& name);
+  virtual void update(float dt, mat4* parent = nullptr);
+};
+class Camera : public Bobj {
+  glm::mat4 _proj;
+  glm::mat4 _view;
+  vec3 _lookat;
+  float _fov = 40.0f;
+  float _far = 1000.0f;
+
+public:
+  glm::mat4& proj() { return _proj; }
+  glm::mat4& view() { return _view; }
+
+  Camera(string_t&& name);
+  void updateViewport(int width, int height);
+  void lookAt(vec3&& at);
+  virtual void update(float dt, mat4* parent = nullptr) override;
+};
+class Component {
+public:
+  virtual void update(Bobj* obj, float dt) {}
+};
+class InputController : public Component {
+  std::shared_ptr<Bobj> _obj = nullptr;
+
+public:
+  InputController();
+  virtual void update(Bobj* obj, float dt) override;
+};
+class Scene {
+  std::vector<std::shared_ptr<Bobj>> _objects;
+  std::shared_ptr<Camera> _activeCamera = nullptr;
+
+  // temp stuff.
+  std::vector<b2_mtex> _mtexs;
+  std::vector<b2_objdata> _objdatas;
+
+  void loadD26Meta(path_t);
+
+public:
+  std::shared_ptr<Camera> activeCamera() { return _activeCamera; }
+  std::unique_ptr<Texture> _color;
+  std::unique_ptr<Texture> _normal_depth;
+
+  Scene();
+  void update(float dt);
+};
+class Window {
+public:
+  enum class WindowState { Created,
+                           Running,
+                           Quit };
+
+private:
+  int _lastx = 0, _lasty = 0, _lastw = 0, _lasth = 0;
+  bool _fullscreen = false;
+  int _width = 0;
+  int _height = 0;
+  GLFWwindow* _window = nullptr;
+  WindowState _state = WindowState::Created;
+  std::unique_ptr<Input> _input;
+  std::unique_ptr<DrawQuads> _drawQuads;
+  std::shared_ptr<Scene> _scene = nullptr;
+
+  void do_input();
+  void toggleFullscreen();
+
+public:
+  Input* input() { return _input.get(); }
+  WindowState state() { return _state; }
+  GLFWwindow* glfwWindow() { return _window; }
+  std::shared_ptr<Scene>& scene() { return _scene; }
+
+  Window(int, int, std::string, GLFWwindow* share = nullptr);
+  virtual ~Window();
+  void initFramebuffer();
+  void render();
+  void on_resize(int w, int h);
+  void initEngine();
+  void quit_everything();
+  void update();
+};
+
+class AppConfig {
+public:
+  bool BreakOnGLError = true;
+};
+
+#pragma endregion
+
+}  // namespace B26D
 
 #endif
