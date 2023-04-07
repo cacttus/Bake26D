@@ -120,6 +120,16 @@ class Gu {
   static std::map<GLFWwindow*, std::unique_ptr<Window>> _windows;
 
 public:
+  template <typename T>
+  static inline bool whileTrueGuard(T& x, T max = 9999999) {
+    if (x >= max) {
+      RaiseDebug("while(true) guard failed. max=" + max);
+      return false;
+    }
+    x++;
+    return true;
+  }
+
   static Window* createWindow(int w, int h, std::string title);
   static Window* getWindow(GLFWwindow* win);
   static AppConfig* config() { return _appConfig.get(); }
@@ -130,7 +140,6 @@ public:
   static path_t assetpath(std::string rel);
   static bool exists(path_t path);
   static void checkErrors(const char* file, int line);
-  static auto createTexture(path_t fileloc);
   static int printDebugMessages(string_t&);
   static std::string getShaderInfoLog(GLint prog);
   static std::string getProgramInfoLog(GLint prog);
@@ -156,25 +165,23 @@ class Image {
 private:
   int _width = 0;
   int _height = 0;
-  int _bpp = 0;
+  int _bpp = 0;  // bytes
   std::unique_ptr<char[]> _data;
 
 public:
+  void check();
   int width() { return _width; }
   int height() { return _height; }
   int bpp() { return _bpp; }
   char* data() { return _data.get(); }
 
-  Image(int w, int h, int bpp, const char* data) {
-    _width = w;
-    _height = h;
-    _bpp = bpp;
-    size_t len = w * h * bpp;
-    _data = std::make_unique<char[]>(len);
-    memcpy(_data.get(), data, len);
-  }
-  virtual ~Image() {
-  }
+  Image(int w, int h, int bpp=4, const char* data= nullptr);
+  virtual ~Image();
+
+  void init(int w, int h, int bpp=4, const char* data = nullptr);
+  glm::u8vec4* pixelOff(int32_t x, int32_t y);
+  void copySubImageFrom(const ivec2& myOff, const ivec2& otherOff, const ivec2& size, Image* pOtherImage);
+  static std::unique_ptr<Image> crop(Image* img, int w, int h);
   static std::unique_ptr<Image> from_file(std::string path);
 };
 class Texture : public GLObject {
@@ -183,10 +190,31 @@ public:
   Texture(Image* img, bool mipmaps = false);
   virtual ~Texture();
 
+  static int calcMipLevels(int w, int h, int minwh = 1);
   static std::unique_ptr<Texture> singlePixel(vec4 color);
 
   void copyToGpu(int w, int h, void* data);
   void copyToGpu(int x, int y, int w, int h, void* data);
+  void bind(int32_t channel);
+  void unbind(int32_t channel);
+};
+class TextureArray : public GLObject {
+private:
+  int _count = 0;
+  int _width = 0;
+  int _height = 0;
+  int _levels = 1;
+
+public:
+  TextureArray();
+  TextureArray(int w, int h, int count, bool mipmaps);
+  TextureArray(std::vector<Image*> imgs, bool mipmaps);
+  virtual ~TextureArray();
+
+  static std::unique_ptr<TextureArray> singlePixel(const vec4& color, int count);  // array of single pixels
+
+  void copyToGpu(int index, void* data);
+  void copyToGpu(int x, int y, int w, int h, int index, void* data);
   void bind(int32_t channel);
   void unbind(int32_t channel);
 };
@@ -207,8 +235,12 @@ public:
     Failed,
     MaxShaderLoadStates,
   };
-
-private:
+  class ShaderMeta {
+  public:
+    std::string _globals;
+    std::vector<std::string> _structs;
+    ShaderMeta();
+  };
   class Uniform {
   public:
     std::string _name = "";
@@ -227,46 +259,57 @@ private:
       _active = active;
     }
   };
-  class UniformBlock {
+  class BufferBlock {  // UniformBlock, ShaderStorageBlock
   public:
     std::string _name = "";
     int _bindingIndex = -1;
     int _bufferSizeBytes = 0;
     bool _active = false;
     bool _hasBeenBound = false;
-    GLenum _rangeTarget;
-    GLenum _bufferTarget;
-    UniformBlock(std::string name, int bind, int size, bool active) {
+    GLenum _buftype;
+    BufferBlock(std::string name, int bind, int size, bool active, GLenum buftype) {
       _name = name;
+      _buftype = buftype;
       _bindingIndex = bind;
       _bufferSizeBytes = size;
       _active = active;
     }
   };
+
+private:
+  static std::unique_ptr<ShaderMeta> _meta;
+
+  // std::map<std::string, int> _buffer_bindings;
+
   std::vector<std::string> _vert_src;
   std::vector<std::string> _frag_src;
   std::vector<std::string> _geom_src;
 
-  std::vector<std::unique_ptr<UniformBlock>> _uniformBlocks;
+  std::vector<std::unique_ptr<BufferBlock>> _uniformBlocks;
   std::vector<std::unique_ptr<Uniform>> _uniforms;
+  std::vector<std::unique_ptr<BufferBlock>> _ssbos;
+
   std::string _name;
   ShaderLoadState _state = ShaderLoadState::None;
   int _maxBufferBindingIndex = 0;
   void parseUniformBlocks();
   void parseUniforms();
-  static std::string getHeader(ShaderStage);
-  static std::vector<std::string> loadSourceLines(path_t& loc, ShaderStage);
+  void parseSSBOs();
+
+  std::vector<std::string> processSource(path_t& loc, ShaderStage);
   static GLuint compileShader(GLenum type, std::vector<std::string>& src);
   static std::string getShaderInfoLog(GLuint prog);
   static std::string getProgramInfoLog(GLuint prog);
   static void printSrc(std::vector<std::string> src);
   static std::string debugFormatSrc(std::vector<std::string> src);
 
-  void bindBlockFast(UniformBlock*, GpuBuffer*);
-
 public:
+  void bindBlockFast(BufferBlock*, GpuBuffer*);
+  void bindSSBBlock(const string_t&& name, GpuBuffer*);
+  int maxBufferBindingIndex() { return _maxBufferBindingIndex; }
   void setCameraUfs(Camera* cam);
   void setTextureUf(Texture* tex, GLuint index, string_t loc);
+  void setTextureUf(TextureArray* tex, GLuint index, string_t loc);
   void bind();
   void unbind();
   Shader(path_t vert_src, path_t geom_src, path_t frag_src);
@@ -282,6 +325,7 @@ class VertexArray : public GLObject {
 public:
   VertexArray();
   virtual ~VertexArray();
+  void setAttrib(int attr_idx, int attr_compsize, GLenum attr_datatype, size_t attr_offset, bool attr_inttype, int binding_index, GpuBuffer* gbuf, size_t stride);
   void bind();
   void unbind();
 };
@@ -411,6 +455,7 @@ public:
   std::shared_ptr<Camera> activeCamera() { return _activeCamera; }
   std::unique_ptr<Texture> _color;
   std::unique_ptr<Texture> _normal_depth;
+  std::unique_ptr<TextureArray> _test_array; //we're going to use arrays
 
   Scene();
   void update(float dt);
@@ -431,6 +476,11 @@ private:
   std::unique_ptr<Input> _input;
   std::unique_ptr<DrawQuads> _drawQuads;
   std::shared_ptr<Scene> _scene = nullptr;
+
+  std::vector<GpuObj> _objs;
+  std::unique_ptr<Shader> _objShader;
+  std::unique_ptr<GpuBuffer> _objBuf;
+  std::unique_ptr<VertexArray> _objVao;
 
   void do_input();
   void toggleFullscreen();

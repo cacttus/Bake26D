@@ -1,10 +1,14 @@
-#version 450
-uniform sampler2D _texture;
-in vec2 _tcoord;
-in vec4 _color;
+
+//uniform sampler2D _texture;
+
+uniform sampler2DArray  _textures;
+
+in vec3 _vertGS;
+in vec2 _texGS;
+flat in uint _texidGS;
+
 out vec4 _output;
+
 void main() {
-  _output = texture(_texture, _tcoord);
-  //_output = _color//vec4(1,0,1,1)//texture(_texture, _tcoord) * _color;
-  //_output.a=1.0
+  _output = texture(_textures, vec3(_texGS, _texidGS));
 }

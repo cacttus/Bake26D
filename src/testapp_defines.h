@@ -34,7 +34,6 @@
 #include <stdio.h>
 #endif
 
-
 namespace std {
 
 std::string to_string(const char* __val);
@@ -55,15 +54,29 @@ namespace B26D {
 
 #pragma region macros
 
-#ifdef _WIN32
-#define DLL_EXPORT __declspec(dllexport)
-#else
+#if defined(linux)
+//__unix__
+#define BR2_OS_LINUX
 #define DLL_EXPORT
+#elif defined(_WIN32)
+// Note Win64 is defined WITH win32
+#define BR2_OS_WINDOWS
+#define DLL_EXPORT __declspec(dllexport)
+// #define BRO_USE_DIRECTX
+// We're not using winsock anymore due to SDL_Net
+// #define BRO_USE_WINSOCK
 #endif
+
 #ifndef M_PI
 #define M_PI 3.14159265358979323846264338327950
 #endif
 #define OS_NOT_SUPPORTED #pragma message("OS not supported")
+
+#define DOES_NOT_OVERRIDE
+
+#define __inout_
+#define __in_
+#define __out_
 
 #define LogDebug(msg) \
   B26D::Log::dbg(std::string() + msg, __FILE__, __LINE__)
@@ -77,7 +90,7 @@ namespace B26D {
 
 #define Assert(__x)                                                       \
   do {                                                                    \
-    if (!(__x)) {                                                           \
+    if (!(__x)) {                                                         \
       std::string str = std::string("Runtime Assertion Failed: ") + #__x; \
       Log::print(str);                                                    \
       B26D::Gu::debugBreak();                                             \
@@ -86,6 +99,11 @@ namespace B26D {
   } while (0);
 
 #define Raise(__str) throw B26D::Exception(__FILE__, __LINE__, (__str))
+#define RaiseDebug(__str) \
+  do {                    \
+    LogDebug(__str);      \
+    Gu::debugBreak();     \
+  } while (0);
 
 #define CheckErrorsRt() Gu::checkErrors(__FILE__, __LINE__)
 #ifdef _DEBUG
@@ -94,10 +112,13 @@ namespace B26D {
 #define CheckErrorsDbg()
 #endif
 
+#define BR2_FORCE_INLINE inline
+
 #pragma endregion
 #pragma region typedef
 
 typedef std::string string_t;
+typedef std::wstring wstring_t;
 typedef std::filesystem::path path_t;
 typedef glm::mat2 mat2;
 typedef glm::mat3 mat3;
@@ -112,6 +133,7 @@ typedef glm::ivec4 ivec4;
 typedef glm::uvec2 uvec2;
 typedef glm::uvec3 uvec3;
 typedef glm::uvec4 uvec4;
+
 
 #pragma endregion
 #pragma region forward decl
@@ -171,7 +193,33 @@ std::string operator+(const std::string& str, const path_t& rhs);
 
 #pragma endregion
 
-}//ns 
+class MathUtils {
+public:
+  BR2_FORCE_INLINE static int32_t getNumberOfDigits(int32_t i) {
+    return i > 0 ? (int)log10f((float)i) + 1 : 1;
+  }
+  BR2_FORCE_INLINE static uint32_t getNumberOfDigits(uint32_t i) {
+    return i > 0 ? (int)log10((double)i) + 1 : 1;
+  }
+};
 
+enum class LineBreak { Unix,
+                       DOS };
+class OperatingSystem {
+public:
+  static inline string_t newline() {
+    string_t ret = "";
+#if defined(BR2_OS_WINDOWS)
+    ret = "\r\n";
+#elif defined(BR2_OS_LINUX)
+    ret = "\n";
+#else
+    OS_METHOD_NOT_IMPLEMENTED
+#endif
+    return ret;
+  }
+};
+
+}  // namespace B26D
 
 #endif

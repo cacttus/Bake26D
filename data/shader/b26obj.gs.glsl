@@ -1,15 +1,61 @@
-#version 450
-layout(location = 0) in vec3 _v3;
-layout(location = 1) in uint _id;
-layout(location = 2) in vec2 _x2;
-layout(location = 3) in vec4 _c4;
-uniform mat4 _projMatrix;
-uniform mat4 _viewMatrix;
-out vec2 _tcoord;
-out vec4 _color;
-void main() {
-  _tcoord = _x2;
-  _color = _c4;
-  vec4 vert = _projMatrix * _viewMatrix*  vec4(_v3, 1);
-  gl_Position = vert;
+layout(points) in;
+layout(triangle_strip, max_vertices=4) out;
+
+in uint _objIDVS[];
+
+out vec3 _vertGS;
+out vec2 _texGS;
+flat out uint _texidGS;
+
+void setGS() {
+  _texidGS = _ufGpuObj[_objIDVS[0]]._texid;
 }
+void main() {
+
+  /*
+                          z,w
+      2------------ ----3
+      |               / |
+      |           /     |
+      |        c        |
+      |     /           |
+      |  /              |
+      0 ----------------1
+  x,y                   
+  */
+  mat4 viewproj = _ufGpuCamera._proj * _ufGpuCamera._view;
+  
+  mat4 wmat = _ufGpuObj[_objIDVS[0]]._mat;
+  vec4 tex = _ufGpuObj[_objIDVS[0]]._tex;
+
+  vec3 center = vec3(0,0,0); 
+  vec3 right  = vec3(1,0,0);
+  vec3 up     = vec3(0,1,0);
+
+  setGS();
+  _texGS          = tex.xy;
+  _vertGS         = vec3(wmat * vec4(vec3(center - right - up), 1));
+  gl_Position     = viewproj * vec4(_vertGS, 1);
+  EmitVertex();
+
+  setGS();
+  _texGS          = tex.zy;
+  _vertGS         =  vec3(wmat * vec4(vec3(center + right - up), 1));
+  gl_Position     = viewproj * vec4(_vertGS, 1);
+  EmitVertex();
+
+  setGS();
+  _texGS          = tex.xw;
+  _vertGS         =  vec3(wmat * vec4(vec3(center - right + up), 1));
+  gl_Position     = viewproj * vec4(_vertGS, 1);
+  EmitVertex();
+
+  setGS();
+  _texGS          = tex.zw;
+  _vertGS         =  vec3(wmat * vec4(vec3(center + right + up), 1));
+  gl_Position     = viewproj * vec4(_vertGS, 1);
+  EmitVertex();
+  
+  EndPrimitive();
+}
+

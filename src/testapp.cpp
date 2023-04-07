@@ -7,6 +7,7 @@
 #define STB_IMAGE_IMPLEMENTATION
 #include "stb_image.h"
 #include "./BinaryFile.h"
+#include "./StringUtil.h"
 
 namespace std {
 
@@ -34,6 +35,7 @@ path_t Gu::_assetsPath = "";
 Window* Gu::_context = nullptr;
 std::unique_ptr<AppConfig> Gu::_appConfig;
 uint64_t Bobj::s_idgen = 1;
+std::unique_ptr<Shader::ShaderMeta> Shader::_meta;
 
 #pragma endregion
 #pragma region Log
@@ -57,6 +59,7 @@ std::string Log::_header(std::string color, bool bold, std::string type, const c
   auto fn = std::filesystem::path(std::string(file)).filename();
   return cc_color(color, bold) + "[" + type + "] " + std::string(pdir) + "/" + std::string(fn) + ":" + std::to_string(line) + " ";
 }
+
 #pragma endregion
 #pragma region Gu
 
@@ -249,33 +252,6 @@ path_t Gu::assetpath(std::string path) {
   }
   return _assetsPath / path_t(path);
 }
-auto Gu::createTexture(path_t impath) {
-  LogInfo("Loading " + impath.string());
-  assert(std::filesystem::exists(impath));
-
-  auto img = Image::from_file(impath.string());
-
-  GLuint tex = 0;
-  glCreateTextures(GL_TEXTURE_2D, 1, &tex);
-  glPixelStorei(GL_UNPACK_ALIGNMENT, 1);
-
-  // test
-  // unsigned char pix[4];
-  // pix[0]=255,pix[1]=0,pix[2]=255,pix[3]=255;
-  // glTextureStorage2D(tex, 1, GL_RGBA8, 1, 1);
-  // glTextureSubImage2D(tex, 0, 0, 0, 1, 1, GL_RGBA, GL_UNSIGNED_BYTE, (void*)pix);
-
-  glTextureStorage2D(tex, 1, GL_RGBA8, img->width(), img->height());
-  glTextureSubImage2D(tex, 0, 0, 0, img->width(), img->height(), GL_RGBA, GL_UNSIGNED_BYTE, (void*)img->data());
-  glTextureParameteri(tex, GL_TEXTURE_BASE_LEVEL, 0);
-  glTextureParameteri(tex, GL_TEXTURE_MAX_LEVEL, 0);  // max(0, mips - 1));
-  // TODO: mips
-  glTextureParameterf(tex, GL_TEXTURE_MIN_FILTER, GL_NEAREST);  // GL_LINEAR_MIPMAP_LINEAR);
-  glTextureParameterf(tex, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
-
-  CheckErrorsDbg();
-  return tex;
-}
 void Gu::checkErrors(const char* file, int line) {
   auto n = glGetError();
   bool error_break = false;
@@ -326,6 +302,28 @@ int Gu::printDebugMessages(string_t& ret) {
 #pragma endregion
 #pragma region Image
 
+Image::Image(int w, int h, int bpp, const char* data) {
+  init(w, h, bpp, data);
+}
+Image::~Image() {}
+void Image::init(int w, int h, int bpp, const char* data) {
+  Assert(bpp > 0);
+  Assert(w > 0);
+  Assert(h > 0);
+  _width = w;
+  _height = h;
+  _bpp = bpp;
+  size_t len = w * h * bpp;
+  _data = std::make_unique<char[]>(len);
+  if (data != nullptr) {
+    memcpy(_data.get(), data, len);
+  }
+}
+void Image::check() {
+  Assert(this->_width > 0);
+  Assert(this->_height > 0);
+  Assert(this->_data != nullptr);
+}
 std::unique_ptr<Image> Image::from_file(std::string path) {
   int w = 0, h = 0, n = 0;
   auto* data = stbi_load(path.c_str(), &w, &h, &n, 4);
@@ -340,7 +338,57 @@ std::unique_ptr<Image> Image::from_file(std::string path) {
   }
   return nullptr;
 }
+std::unique_ptr<Image> Image::crop(Image* img, int w, int h) {
+  auto pt = std::make_unique<Image>(w, h, 4);
+  pt->copySubImageFrom(ivec2(0, 0), ivec2(0, 0), ivec2(w, h), img);
+  return pt;
+}
+void Image::copySubImageFrom(const ivec2& myOff, const ivec2& otherOff, const ivec2& size, Image* pOtherImage) {
+  if (_data == NULL) {
+    Raise("Copy SubImage 2 - From image was not allocated");
+  }
+  if (pOtherImage == NULL) {
+    Raise("Copy SubImage 1 - Input Image was null.");
+  }
+  if (pOtherImage->_data == NULL) {
+    Raise("Copy SubImage 3 - Input Image TO was not allocated");
+  }
+  // size constraint validation
+  if (myOff.x < -1 || myOff.y < -1) {
+    Raise("Copy SubImage 4");
+  }
+  if (myOff.x >= (int)_width || myOff.y >= (int)_height) {
+    Raise("Copy SubImage 5.  This hits if you put too many textures in the db_atlas.dat file.  \
+        There can only be XxX textres (usually 16x16)");
+  }
+  if (otherOff.x < 0 || otherOff.y < 0) {
+    Raise("Copy SubImage 6");
+  }
+  if (otherOff.x >= pOtherImage->_width || otherOff.y >= pOtherImage->_height) {
+    Raise("Copy SubImage 7");
+  }
 
+  ivec2 scanPos = myOff;
+  int32_t scanLineByteSize = size.x * _bpp;
+  int32_t nLines = size.y;
+
+  Assert(scanLineByteSize >= 0);
+
+  for (int iScanLine = 0; iScanLine < nLines; ++iScanLine) {
+    void* vdst = (void*)pixelOff(scanPos.x, scanPos.y + iScanLine);
+    void* vsrc = (void*)pOtherImage->pixelOff(otherOff.x, otherOff.y + iScanLine);  // Note: we do this here because the tga images are flipped upside down for some reason in the texture composer.
+    memcpy(vdst, vsrc, scanLineByteSize);
+  }
+}
+glm::u8vec4* Image::pixelOff(int32_t x, int32_t y) {
+  Assert(_data != nullptr);
+  Assert(x < (int32_t)_width && x >= 0);
+  Assert(y < (int32_t)_height && y >= 0);
+
+  size_t off = (y * _width + x) * _bpp;  // vofftos((size_t)x, (size_t)y, (size_t)_width);
+
+  return (glm::u8vec4*)((char*)_data.get() + off);  // unsafe cast
+}
 #pragma endregion
 #pragma region Shader
 
@@ -351,19 +399,31 @@ Shader::Shader(path_t vert_loc, path_t geom_loc, path_t frag_loc) {
   Assert(Gu::exists(vert_loc));
   Assert(Gu::exists(frag_loc));
 
-  _vert_src = loadSourceLines(vert_loc, ShaderStage::Vertex);
+  _vert_src = processSource(vert_loc, ShaderStage::Vertex);
   auto vert = compileShader(GL_VERTEX_SHADER, _vert_src);
+  if (vert == 0) {
+    _state = ShaderLoadState::Failed;
+    return;
+  }
   glAttachShader(_glId, vert);
 
-  _frag_src = loadSourceLines(frag_loc, ShaderStage::Fragment);
+  _frag_src = processSource(frag_loc, ShaderStage::Fragment);
   auto frag = compileShader(GL_FRAGMENT_SHADER, _frag_src);
+  if (frag == 0) {
+    _state = ShaderLoadState::Failed;
+    return;
+  }
   glAttachShader(_glId, frag);
 
   GLuint geom = 0;
   if (!geom_loc.empty()) {
     Assert(Gu::exists(geom_loc));
-    _geom_src = loadSourceLines(geom_loc, ShaderStage::Geometry);
+    _geom_src = processSource(geom_loc, ShaderStage::Geometry);
     geom = compileShader(GL_GEOMETRY_SHADER, _geom_src);
+    if (geom == 0) {
+      _state = ShaderLoadState::Failed;
+      return;
+    }
     glAttachShader(_glId, geom);
   }
 
@@ -377,8 +437,8 @@ Shader::Shader(path_t vert_loc, path_t geom_loc, path_t frag_loc) {
     LogDebug(Shader::getProgramInfoLog(_glId));
     glDeleteProgram(_glId);
     _state = ShaderLoadState::Failed;
-    // return;
-    Raise("Failed to link program");
+    LogError("Failed to link program");
+    return;
   }
   glDetachShader(_glId, vert);
   glDetachShader(_glId, frag);
@@ -388,6 +448,7 @@ Shader::Shader(path_t vert_loc, path_t geom_loc, path_t frag_loc) {
 
   parseUniformBlocks();
   parseUniforms();
+  parseSSBOs();
 
   _state = ShaderLoadState::Success;
 }
@@ -396,7 +457,9 @@ Shader::~Shader() {
   glDeleteProgram(_glId);
 }
 void Shader::bind() {
-  glUseProgram(_glId);
+  if (_state == ShaderLoadState::Success) {
+    glUseProgram(_glId);
+  }
 }
 void Shader::unbind() {
   glUseProgram(0);
@@ -408,7 +471,7 @@ void Shader::parseUniforms() {
   for (auto i = 0; i < u_count; i++) {
     GLenum u_type;
     GLsizei u_size = 0;
-    string_t u_name = "DEADDEADDEADDEADDEADDEADDEADDEADDEADDEADDEADDEADDEADDEADDEADDEAD";  // idk.
+    string_t u_name = "DEADDEADDEADDEADDEADDEADDEADDEADDEADDEADDEADDEADDEADDEADDEADDEAD";
     int u_name_len = 0;
 
     glGetActiveUniform(_glId, i, u_name.length(), &u_name_len, &u_size, &u_type, u_name.data());
@@ -435,19 +498,10 @@ void Shader::parseUniforms() {
       if (Gu::config()->Debug_Print_Shader_Uniform_Details_Verbose_NotFound) {
         LogDebug(_name + ": .. Inactve uniform: " + u_name);
       }
-      // Not necessarily an error
-      // GetUniformLocation "This function returns -1 if name does not correspond to an active uniform variable in program,
-      // if name starts with the reserved prefix "gl_", or if name is associated with an atomic counter or a named uniform block."
-      // Uniform variables that are structures or arrays of structures may be queried by calling glGetUniformLocation for each
-      // field within the structure. The array element operator "[]" and the structure field operator "." may be used in name in
-      // order to select elements within an array or fields within a structure. The result of using these operators is not allowed
-      // to be another structure, an array of structures, or a subcomponent of a vector or a matrix. Except if the last part of name
-      // indicates a uniform variable array, the location of the first element of an array can be retrieved by using the name of the
-      // array, or by using the name appended by "[0]".
     }
     else {
       if (Gu::config()->Debug_Print_Shader_Uniform_Details_Verbose_NotFound) {
-        LogDebug(_name + ": .. Active uniform: " + u_name);
+        LogDebug(_name + ": Active uniform: " + u_name);
       }
     }
 
@@ -455,9 +509,7 @@ void Shader::parseUniforms() {
   }
 }
 void Shader::parseUniformBlocks() {
-  int u_count = 0;
   int u_block_count = 0;
-  glGetProgramiv(_glId, GL_ACTIVE_UNIFORMS, &u_count);
   glGetProgramiv(_glId, GL_ACTIVE_UNIFORM_BLOCKS, &u_block_count);
   CheckErrorsRt();
   for (auto iBlock = 0; iBlock < u_block_count; iBlock++) {
@@ -469,7 +521,7 @@ void Shader::parseUniformBlocks() {
     glGetActiveUniformBlockiv(_glId, iBlock, GL_UNIFORM_BLOCK_BINDING, &binding);
     CheckErrorsRt();
 
-    std::string u_name = "DEADDEADDEADDEADDEADDEADDEADDEADDEADDEADDEADDEADDEADDEADDEADDEAD";  // idk.
+    std::string u_name = "DEADDEADDEADDEADDEADDEADDEADDEADDEADDEADDEADDEADDEADDEADDEADDEAD";
     int u_name_len = 0;
     glGetActiveUniformBlockName(_glId, iBlock, u_name.length(), &u_name_len, u_name.data());
     CheckErrorsRt();
@@ -479,18 +531,18 @@ void Shader::parseUniformBlocks() {
     if (binding < 0) {
       active = false;
       if (Gu::config()->Debug_Print_Shader_Uniform_Details_Verbose_NotFound) {
-        LogDebug(_name + ": ..Inactive uniform block: " + u_name);
+        LogDebug(_name + ": Inactive uniform block: " + u_name);
       }
     }
     else {
       if (Gu::config()->Debug_Print_Shader_Uniform_Details_Verbose_NotFound) {
-        LogDebug(_name + ": ..Active uniform block: " + u_name);
+        LogDebug(_name + ": Active uniform block: " + u_name);
       }
 
       _maxBufferBindingIndex = glm::max(_maxBufferBindingIndex, binding);
     }
 
-    _uniformBlocks.push_back(std::make_unique<UniformBlock>(u_name, binding, buffer_size_bytes, active));
+    _uniformBlocks.push_back(std::make_unique<BufferBlock>(u_name, binding, buffer_size_bytes, active, GL_UNIFORM_BUFFER));
   }
   // check duplicate binding indexes for blocks
   for (int dupe_loc = 0; dupe_loc < _uniformBlocks.size(); dupe_loc++) {
@@ -506,19 +558,50 @@ void Shader::parseUniformBlocks() {
     }
   }
 }
-void Shader::bindBlockFast(UniformBlock* u, GpuBuffer* b) {
+void Shader::parseSSBOs() {
+  CheckErrorsRt();
+  int ssb_count;
+  glGetProgramInterfaceiv(_glId, GL_SHADER_STORAGE_BLOCK, GL_ACTIVE_RESOURCES, &ssb_count);
+
+  for (int i = 0; i < ssb_count; i++) {
+    string_t ssbo_name = "DEADDEADDEADDEADDEADDEADDEADDEADDEADDEADDEADDEADDEADDEADDEADDEAD";
+    int u_name_len = 0;
+    glGetProgramResourceName(_glId, GL_SHADER_STORAGE_BLOCK, i, ssbo_name.length(), &u_name_len, ssbo_name.data());
+    ssbo_name = ssbo_name.substr(0, u_name_len);
+    if (glGetError() == GL_NO_ERROR) {
+      auto block_index = glGetProgramResourceIndex(_glId, GL_SHADER_STORAGE_BLOCK, ssbo_name.c_str());
+      Assert(block_index >= 0);
+
+      _maxBufferBindingIndex++;
+      glShaderStorageBlockBinding(_glId, block_index, _maxBufferBindingIndex);
+      _ssbos.push_back(std::make_unique<BufferBlock>(ssbo_name, _maxBufferBindingIndex, 0, true, GL_SHADER_STORAGE_BUFFER));
+      if (Gu::config()->Debug_Print_Shader_Uniform_Details_Verbose_NotFound) {
+        LogDebug(_name + ": Active SSBO " + ssbo_name);
+      }
+    }
+    else {
+      CheckErrorsRt();
+      break;
+    }
+  }
+  CheckErrorsRt();
+}
+void Shader::bindSSBBlock(const string_t&& name, GpuBuffer* g) {
+  for (auto& s : _ssbos) {
+    if (s->_name == name) {
+      bindBlockFast(s.get(), g);
+      return;
+    }
+  }
+  Raise("coudl not find ssbo block " + name);
+}
+void Shader::bindBlockFast(BufferBlock* u, GpuBuffer* b) {
   Assert(b != nullptr);
-  // Assert(b->_rangeTarget != nullptr);
-  glBindBufferBase(GL_UNIFORM_BUFFER, u->_bindingIndex, b->glId());  // GL_UNIFORM_BUFFER GL_SHADER_STO..
+  glBindBufferBase(u->_buftype, u->_bindingIndex, b->glId());  // GL_UNIFORM_BUFFER GL_SHADER_STO..
   CheckErrorsDbg();
-  // if (_bufferTarget == BufferTarget.UniformBuffer) { RangeTarget = BufferRangeTarget.UniformBuffer; }
-  // else if (_bufferTarget == BufferTarget.ShaderStorageBuffer) { RangeTarget = BufferRangeTarget.ShaderStorageBuffer; }
-  // else if (_bufferTarget == BufferTarget.ArrayBuffer) { RangeTarget = null; }
-  // else if (_bufferTarget == BufferTarget.ElementArrayBuffer) { RangeTarget = null;
-  glBindBuffer(GL_UNIFORM_BUFFER, b->glId());
+  glBindBuffer(u->_buftype, b->glId());
   CheckErrorsDbg();
   u->_hasBeenBound = true;
-
   // u->_hasBeenCopiedInitially = b->CopyToGpuCalled;
   // u->_hasBeenCopiedThisFrame = b->CopyToGpuCalledFrameId == Gu.Context.FrameStamp;
 }
@@ -551,71 +634,106 @@ std::string Shader::getProgramInfoLog(GLuint prog) {
   std::string info = std::string(buf.begin(), buf.begin() + outlen);
   return info;
 }
-std::string Shader::getHeader(ShaderStage stage) {
-  return "head";
-}
-std::vector<std::string> Shader::loadSourceLines(path_t& loc, ShaderStage stage) {
-  auto src = Gu::readFile(loc);
-  auto str_globals = Gu::readFile(Gu::assetpath("shader/globals.glsl"));
-  auto structs_raw = Gu::readFile(Gu::relpath("../src/gpu_structs.h"));
+Shader::ShaderMeta::ShaderMeta() {
+  LogInfo("Loading shader metadata");
 
   std::string c_shared = "//SHADER_SHARED";
 
+  auto structs_raw = Gu::readFile(Gu::relpath("../src/gpu_structs.h"));
   auto da = structs_raw.find(c_shared);
   Assert(da != string_t::npos);
   da += c_shared.length();
   auto db = structs_raw.find(c_shared, da);
   Assert(db != string_t::npos);
   auto strStructs = structs_raw.substr(da, db - da);
-  str_globals.append("\n");
-  str_globals.append(strStructs);
-  str_globals.append("\n");
+
+  _globals = Gu::readFile(Gu::assetpath("shader/globals.glsl"));
+  _globals.append("\n");
+  _globals.append(strStructs);
+  _globals.append("\n");
 
   // struct inputs
-  std::vector<std::string> def_structs;
-  std::string strBuffers = "";
-  std::regex rex("\\s*struct\\s+([a-zA-Z0-9_]+)[\\{\\s\\n]");
-  std::smatch matches;
-  auto res = std::regex_search(strStructs, matches, rex);
-  auto xxx = matches.length();
-  if (matches.length() > 0) {
-    def_structs.push_back(matches[1]);
+  std::regex rex("struct\\s+([a-zA-Z0-9_]+)");
+  for (auto ite = std::sregex_iterator(strStructs.begin(), strStructs.end(), rex); ite != std::sregex_iterator(); ite++) {
+    int n = ite->size();
+    if (ite->size() > 1) {
+      _structs.push_back((*ite)[1]);
+      LogDebug("struct " + (*ite)[1].str());
+    }
+  }
+}
+std::vector<std::string> Shader::processSource(path_t& loc, ShaderStage stage) {
+  if (_meta == nullptr) {
+    _meta = std::make_unique<ShaderMeta>();
+  }
+  Assert(_meta);
+
+  LogInfo("==Loading " + loc.string() + "==");
+  auto src_raw = Gu::readFile(loc);
+
+  // find inputs.
+  LogInfo("==Processing==");
+  Assert(_meta);
+  std::string str_buffers = "";
+  auto src_nocoms = StringUtil::strip(src_raw, std::string("/*"), std::string("*/"), true, true);
+  src_nocoms = StringUtil::strip(src_nocoms, std::string("//"), std::string("\n"), true, true);
+  src_nocoms = StringUtil::strip(src_nocoms, std::string("\""), std::string("\""), true, true);
+  src_nocoms = StringUtil::strip(src_nocoms, std::string("\'"), std::string("\'"), true, true);
+
+  if (false) {
+    LogDebug("========");
+    printSrc(StringUtil::split(src_raw, '\n'));
+    LogDebug("========");
+    printSrc(StringUtil::split(src_nocoms, '\n'));
+    LogDebug("========");
   }
   int binding = 0;
-  for (auto& s : def_structs) {
-    std::string buftype = "";
-    buftype = "uniform";  // "buffer" << for ssbo
-    std::string ufName = "_uf" + s;
-    if (src.find(ufName) != std::string::npos) {
-      strBuffers.append("layout(std140, binding = " + std::to_string(binding++) + ") " + buftype + " " + ufName + "_Block {\n");
-      strBuffers.append("  " + s + " " + ufName + ";\n");
-      strBuffers.append("};\n");
+
+  for (auto& str_struct : _meta->_structs) {
+    std::string ufName = "_uf" + str_struct;
+    std::string buftype = "uniform";
+    std::string arrsuffix = "";
+    std::string std = "std140";
+    std::string location = "binding";
+
+    auto ufnpos = src_raw.find(ufName);
+    if (ufnpos != std::string::npos) {
+      //**ugh buffer binding location mismatch.. fix this ..
+      if (src_raw.at(ufnpos + ufName.length()) == '[') {
+        buftype = "buffer";  // ssbo
+        arrsuffix = "[]";
+        std = "std430";
+
+        // location = "location"; //testing - this may not matter as we set ssbo bindign points manually
+        // TODO: REMOVE THIS - don't set location=.. for buffers we generate this manualy
+        //  generate binding this is CROSS SHADER for Vs/gs/etc
+        // note these will be changed when we process the metadata but they must match
+        //         auto bite = _buffer_bindings.find(ufName);
+        //         if (bite == _buffer_bindings.end()) {
+        //           int next_binding = 0;
+        //           auto ite = std::max_element(_buffer_bindings.begin(), _buffer_bindings.end(), [](const auto& a, const auto& b) -> bool { return a.second < b.second; });
+        //           if (ite != _buffer_bindings.end()) {
+        //             next_binding = ite->second + 1;
+        //           }
+        //
+        //           binding = next_binding;
+        //           _buffer_bindings.insert(std::make_pair(ufName, binding));
+        //         }
+        //         else {
+        //           binding = bite->second;
+        //         }
+      }
+      if (src_raw.find(ufName) != std::string::npos) {
+        // str_buffers.append("layout(" + std + ", " + location + " = " + std::to_string(binding) + ") " + buftype + " " + ufName + "_Block {\n");
+        str_buffers.append("layout(" + std + ") " + buftype + " " + ufName + "_Block {\n");
+        str_buffers.append("  " + str_struct + " " + ufName + arrsuffix + ";\n");
+        str_buffers.append("};\n");
+      }
     }
   }
-  str_globals.append(strBuffers);
 
-  // append headers
-  src = str_globals.append(src);
-
-  // break into lines.
-  std::vector<std::string> lines;
-  int last = 0;
-  int next = -1;
-  for (int xxx = 0; xxx < 99999999; xxx++) {
-    last = next + 1;
-    next = src.find('\n', last);
-    if (next == std::string::npos) {
-      next = src.length();
-    }
-    if (next - last > 0) {
-      auto line = src.substr(last, next - last);
-      lines.push_back(line);
-    }
-    if (next == std::string::npos) {
-      break;
-    }
-  }
-
+  auto src = _meta->_globals + str_buffers + src_raw;
+  auto lines = StringUtil::split(src, '\n');
   printSrc(lines);
 
   return lines;
@@ -649,7 +767,9 @@ GLuint Shader::compileShader(GLenum type, std::vector<std::string>& src_lines) {
     exinfo += debugFormatSrc(src_lines);
     exinfo += "\n";
     exinfo += info;
-    Raise(exinfo);
+    LogError(exinfo);
+    return 0;
+    // Raise(exinfo);
   }
   return shader;
 }
@@ -680,7 +800,12 @@ void Shader::setTextureUf(Texture* tex, GLuint channel, string_t loc) {
   tex->bind(channel);
   CheckErrorsDbg();
 }
-
+void Shader::setTextureUf(TextureArray* tex, GLuint channel, string_t loc) {
+  auto tex_loc1 = glGetUniformLocation(_glId, loc.c_str());
+  glProgramUniform1i(_glId, tex_loc1, channel);
+  tex->bind(channel);
+  CheckErrorsDbg();
+}
 #pragma endregion
 #pragma region ALL OTHER CLASSES
 
@@ -696,7 +821,18 @@ void VertexArray::bind() {
 void VertexArray::unbind() {
   glBindVertexArray(0);
 }
-
+void VertexArray::setAttrib(int attr_idx, int attr_compsize, GLenum attr_datatype, size_t attr_offset, bool attr_inttype, int binding_index, GpuBuffer* gbuf, size_t stride) {
+  glEnableVertexArrayAttrib(_glId, attr_idx);
+  if (attr_inttype) {
+    glVertexArrayAttribIFormat(_glId, attr_idx, attr_compsize, attr_datatype, attr_offset);
+  }
+  else {
+    glVertexArrayAttribFormat(_glId, attr_idx, attr_compsize, attr_datatype, GL_FALSE, attr_offset);
+  }
+  glVertexArrayAttribBinding(_glId, attr_idx, binding_index);
+  glVertexArrayVertexBuffer(_glId, binding_index, gbuf->glId(), 0, stride);
+  // glVertexArrayElementBuffer(_vao->glId(), _ibo->glId());
+}
 GpuBuffer::GpuBuffer(size_t size, void* data, uint32_t flags) {
   glCreateBuffers(1, &_glId);
   // glNamedBufferStorage(_glId, size, data, flags);//for immutable buffers
@@ -735,13 +871,7 @@ void Texture::copyToGpu(int w, int h, void* data) {
   copyToGpu(0, 0, w, h, data);
 }
 void Texture::copyToGpu(int x, int y, int w, int h, void* data) {
-  float mwidth = w, mheight = h;
-  int mlevels = 0;
-  while (mwidth > 1 && mheight > 1) {
-    mlevels++;
-    mwidth /= 2.0f;
-    mheight /= 2.0f;
-  }
+  int mlevels = Texture::calcMipLevels(w, h);
 
   glTextureStorage2D(_glId, mlevels, GL_RGBA8, w, h);
   glTextureSubImage2D(_glId, 0, 0, 0, w, h, GL_RGBA, GL_UNSIGNED_BYTE, (void*)data);
@@ -761,6 +891,82 @@ void Texture::bind(int32_t channel) {
 void Texture::unbind(int32_t channel) {
   glBindTextureUnit(channel, 0);
 }
+int Texture::calcMipLevels(int w, int h, int minwh) {
+  float mwidth = w;
+  float mheight = h;
+  int mlevels = 0;
+  while (mwidth > (float)minwh && mheight > (float)minwh) {
+    mlevels++;
+    mwidth /= 2.0f;
+    mheight /= 2.0f;
+  }
+  return mlevels;
+}
+
+TextureArray::TextureArray() {
+  glCreateTextures(GL_TEXTURE_2D_ARRAY, 1, &_glId);
+}
+TextureArray::TextureArray(int w, int h, int count, bool mipmaps) : TextureArray() {
+  _width = w;
+  _height = h;
+  _count = count;
+  _levels = mipmaps ? Texture::calcMipLevels(_width, _height) : 1;
+  Assert(_levels > 0);
+
+  glTextureStorage3D(_glId, _levels, GL_RGBA8, (GLsizei)_width, (GLsizei)_height, (GLsizei)_count);
+  CheckErrorsRt();
+
+  glTextureParameteri(_glId, GL_TEXTURE_BASE_LEVEL, 0);
+  glTextureParameteri(_glId, GL_TEXTURE_MAX_LEVEL, _levels - 1);  // max(0, mips - 1));
+  glTextureParameterf(_glId, GL_TEXTURE_MIN_FILTER, GL_NEAREST);  // GL_LINEAR_MIPMAP_LINEAR);
+  glTextureParameterf(_glId, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+  CheckErrorsRt();
+}
+TextureArray::TextureArray(std::vector<Image*> imgs, bool mipmaps) : TextureArray(imgs[0]->width(), imgs[0]->height(), (int)imgs.size(), mipmaps) {
+  for (int index = 0; index < imgs.size(); index++) {
+    auto img = imgs[index];
+    img->check();
+    if (img->width() != _width || img->height() != _height) {
+      LogWarn("Image size (" + img->width() + "," + img->height() + ") was not equal to base size (" + _width + "," + _height + ")");
+    }
+
+    copyToGpu(index, img->data());
+  }
+
+  if (_levels > 1) {
+    glGenerateTextureMipmap(_glId);
+    CheckErrorsRt();
+  }
+}
+TextureArray::~TextureArray() {
+  glDeleteTextures(1, &_glId);
+}
+std::unique_ptr<TextureArray> TextureArray::singlePixel(const vec4& color, int count) {
+  std::unique_ptr<TextureArray> ret = std::make_unique<TextureArray>(1, 1, count, false);
+
+  uint8_t pix[4];
+  pix[0] = (uint8_t)glm::round(glm::clamp(color.r, 0.0f, 1.0f) * 255.0f);
+  pix[1] = (uint8_t)glm::round(glm::clamp(color.g, 0.0f, 1.0f) * 255.0f);
+  pix[2] = (uint8_t)glm::round(glm::clamp(color.b, 0.0f, 1.0f) * 255.0f);
+  pix[3] = (uint8_t)glm::round(glm::clamp(color.a, 0.0f, 1.0f) * 255.0f);
+  for (int i = 0; i < count; i++) {
+    ret->copyToGpu(i, (void*)pix);
+  }
+  return ret;
+}
+void TextureArray::copyToGpu(int index, void* data) {
+  copyToGpu(0, 0, _width, _height, index, data);
+}
+void TextureArray::copyToGpu(int x, int y, int w, int h, int index, void* data) {
+  glTextureSubImage3D(_glId, 0, x, y, index, w, h, 1, GL_RGBA, GL_UNSIGNED_BYTE, (void*)data);
+  CheckErrorsDbg();
+}
+void TextureArray::bind(int32_t channel) {
+  glBindTextureUnit(channel, _glId);
+}
+void TextureArray::unbind(int32_t channel) {
+  glBindTextureUnit(channel, 0);
+}
 
 Framebuffer::Framebuffer() {
   glGenFramebuffers(1, &_glId);
@@ -776,7 +982,7 @@ void Input::addKeyEvent(int32_t key, bool press) {
   k._key = key;
   k._press = press;
   _key_events.push_back(k);
-  msg("key event " + key + " press=" + press);
+  // msg("key event " + key + " press=" + press);
 }
 bool Input::press(int key) {
   auto it = _keys.find(key);
@@ -1047,6 +1253,14 @@ Scene::Scene() {
   auto colimg = Image::from_file(colpath.string());
   _color = std::make_unique<Texture>(colimg.get());
 
+  auto imga = Image::from_file(Gu::relpath("../data/tex/kratos.jpg").string());
+  auto imgb = Image::from_file(Gu::relpath("../data/tex/marin.jpg").string());
+  auto bcrp = Image::crop(imgb.get(), imga->width(), imga->height());
+
+  std::vector<Image*> images = {imga.get(), bcrp.get()};
+
+  _test_array = std::make_unique<TextureArray>(images, true);
+
   _activeCamera = std::make_shared<Camera>("MainCamera");
   _activeCamera->components().push_back(std::make_unique<InputController>());
   _activeCamera->lookAt(vec3(0, 0, 0));
@@ -1226,6 +1440,26 @@ void Window::initEngine() {
   _drawQuads->testMakeQuads();
   _drawQuads->copyToGpu();
 
+  //obj drawer
+  // no inputs here, vertex-less and buffer only
+  _objShader = std::make_unique<Shader>(Gu::assetpath("shader/b26obj.vs.glsl"), Gu::assetpath("/shader/b26obj.gs.glsl"), Gu::assetpath("/shader/b26obj.fs.glsl"));
+  GpuObj ob;
+  ob._mat = mat4(1.0);
+  ob._mat = glm::translate(ob._mat, vec3(-3.25f, 1, 0));
+  ob._mat = glm::scale(ob._mat, vec3(3, 3, 3));
+  ob._tex = vec4(0, 0, 1, 1); //looks like this is upside down could be a data transfer issue. 
+  ob._texid = 0;
+  _objs.push_back(ob);
+  ob._mat = mat4(1.0);
+  ob._mat = glm::translate(ob._mat, vec3(3.25f, 1, 0));
+  ob._mat = glm::scale(ob._mat, vec3(3, 3, 3));
+  ob._tex = vec4(0, 0, 1, 1);
+  ob._texid = 1;
+  ob._texid = 1;
+  _objs.push_back(ob);  
+  _objBuf = std::make_unique<GpuBuffer>(sizeof(GpuObj) * _objs.size(), _objs.data());
+  _objVao = std::make_unique<VertexArray>();
+
   glfwGetWindowPos(_window, &_lastx, &_lasty);
   glfwGetWindowSize(_window, &_lastw, &_lasth);
   on_resize(_lastw, _lasth);
@@ -1249,7 +1483,19 @@ void Window::render() {
   glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
 
   _scene->activeCamera()->updateViewport(_width, _height);  //_proj shouldbe on the window
+
+  // draw quads test
   _drawQuads->draw(_scene->activeCamera().get(), _scene->_color.get());
+
+  // objs test
+  _objShader->bind();
+  _objShader->setCameraUfs(_scene->activeCamera().get());
+  _objShader->setTextureUf(_scene->_test_array.get(), 0, "_textures");
+  _objShader->bindSSBBlock("_ufGpuObj_Block", _objBuf.get());
+  _objVao->bind();
+  glDrawArrays(GL_POINTS, 0, _objs.size());
+  _objVao->unbind();
+  _objShader->unbind();
 
   CheckErrorsRt();
 }
