@@ -8,37 +8,67 @@
 
 namespace B26D {
 
-class b2_objdata {
+#pragma region testapp
+
+template <class Tx>
+class box2x {
 public:
-  int32_t _id = -1;
-  std::string _name = "";
-  std::vector<b2_action> _actions;
-  void deserialize(BinaryFile* bf);
+  typedef glm::vec<2, Tx, glm::defaultp> _vec;
+  _vec _min;
+  _vec _max;
+  Tx width() const { return _max.x - _min.x; }
+  Tx height() const { return _max.y - _min.y; }
+  box2x() {}
+  box2x(Tx minx, Tx miny, Tx maxx, Tx maxy) {
+    _min.x = minx;
+    _min.y = miny;
+    _max.x = maxx;
+    _max.y = maxy;
+  }
+  box2x(const _vec& dmin, const _vec& dmax) {
+    _min = dmin;
+    _max = dmax;
+  }
+  bool contains_inclusive(const _vec& pt) {
+    return pt.x >= _min.x && pt.y >= _min.y && pt.x <= _max.x && pt.y <= _max.y;
+  }
+  bool contains_LT_inclusive(const _vec& pt) {
+    return pt.x >= _min.x && pt.y >= _min.y && pt.x < _max.x && pt.y < _max.y;
+  }
+  box2x clip(const box2x& other) const {
+    // clip by other box
+    box2x ret = *this;
+    if (ret._min.x < other._min.x) {
+      ret._min.x = other._min.x;
+    }
+    if (ret._min.y > other._min.y) {
+      ret._min.y = other._min.y;
+    }
+    if (ret._max.x > other._max.x) {
+      ret._max.x = other._max.x;
+    }
+    if (ret._max.y > other._max.y) {
+      ret._max.y = other._max.y;
+    }
+    return ret;
+  }
+  box2x intersect(const box2x& other) const {
+    box2x ret;
+    ret._max = glm::min(_max, other._max);
+    ret._min = glm::max(_min, other._min);
+    return ret;
+  }
+  bool valid() const {
+    return _max.x >= _min.x && _max.y >= _min.y;
+  }
+  bool has_volume() const {
+    return _max != _min;
+  }
 };
-class b2_action {
-public:
-  int32_t _id = -1;
-  std::string _name = "";
-  std::vector<b2_frame> _frames;
-  void deserialize(BinaryFile* bf);
-};
-class b2_frame {
-public:
-  float _seq = -1;
-  std::string _name = "";
-  int32_t _texid = -1;
-  int32_t _x = -1;
-  int32_t _y = -1;
-  int32_t _w = -1;
-  int32_t _h = -1;
-  void deserialize(BinaryFile* bf);
-};
-class b2_mtex {
-public:
-  int32_t _texid = -1;
-  std::vector<std::string> _images;
-  void deserialize(BinaryFile* bf);
-};
+
+typedef box2x<float> box2;
+typedef box2x<int> box2i;
+
 // #define PixelSize = 1.0f/4.0f //1/4 meter - do in shader
 struct GpuSpriteData {
   uint32_t _texId;  // normal or color
@@ -49,20 +79,20 @@ struct GpuSpriteVertex {
   uint32_t _id;
 };
 struct GpuQuadVert {
-  glm::vec3 _v;
+  vec3 _v;
   uint32_t _id;
-  glm::vec2 _x;
-  glm::vec4 _c;
+  vec2 _x;
+  vec4 _c;
 };
 struct GpuQuad {
   GpuQuadVert _verts[4];
   // TODO: model matrix
-  void translate(glm::vec3 off) {
+  void translate(vec3 off) {
     for (auto& v : _verts) {
       v._v += off;
     }
   }
-  void scale(glm::vec3 scl) {
+  void scale(vec3 scl) {
     auto c = (_verts[2]._v - _verts[0]._v) * 0.5f;
     for (auto& v : _verts) {
       v._v = (v._v - c) * scl + c;
@@ -104,6 +134,7 @@ public:
 
   static void err(std::string s, const char* file, int line);
   static void dbg(std::string s, const char* file, int line);
+  static void warn(std::string s, const char* file, int line);
   static void inf(std::string s, const char* file, int line);
   static void exception(Exception ex);
   static void print(std::string s);
@@ -116,26 +147,23 @@ class Gu {
   static path_t _appPath;
   static path_t _assetsPath;
   static Window* _context;
-  static std::unique_ptr<AppConfig> _appConfig;
-  static std::map<GLFWwindow*, std::unique_ptr<Window>> _windows;
+  static uptr<AppConfig> _appConfig;
+  static std::map<GLFWwindow*, uptr<Window>> _windows;
+  static std::map<ImageFormatType, uptr<ImageFormat>> _imageFormats;
 
 public:
-  template <typename T>
-  static inline bool whileTrueGuard(T& x, T max = 9999999) {
-    if (x >= max) {
-      RaiseDebug("while(true) guard failed. max=" + max);
-      return false;
-    }
-    x++;
-    return true;
+  inline static void trap(){
+    int n=0;
+    n++;
   }
-
+  static void initGlobals(std::string exe_path);
+  static int run(int argc, char** argv);
+  static ImageFormat* imageFormat(ImageFormatType fmt, bool throwinfnotfound = true);
   static Window* createWindow(int w, int h, std::string title);
   static Window* getWindow(GLFWwindow* win);
   static AppConfig* config() { return _appConfig.get(); }
   static Window* currentContext() { return _context; }
   static std::string pad(std::string st, int width, char padchar = '0');
-  static void initGlobals(std::string exe_path);
   static path_t relpath(std::string rel);
   static path_t assetpath(std::string rel);
   static bool exists(path_t path);
@@ -151,7 +179,71 @@ public:
   static uint64_t getMilliSeconds();
   static std::string executeReadOutput(const std::string& cmd);
   static std::string readFile(path_t fileLoc);
-  static int run(int argc, char** argv);
+  // template < typename Tx >
+  // static void move_uptr(std::vector<uptr<Tx>> from, std::vector<uptr<Tx>> to, ){
+  //     std::vector<uptr<Tx>> source;
+  //     source.push_back(std::make_unique<Tx>());
+  //     std::vector<uptr<Tx>> destination;
+  //     std::move(begin(source), end(source), std::back_inserter(destination));
+  // }
+  template <class Tx>
+  static inline bool whileTrueGuard(Tx& x, Tx max = 999999999) {
+    if (x >= max) {
+      RaiseDebug("while(true) guard failed. max=" + max);
+      return false;
+    }
+    x++;
+    return true;
+  }
+};
+
+class ImageFormat {
+private:
+  ImageFormatType _format;
+  GLenum _glFormat;
+  GLenum _glInternalFormat;
+  GLenum _glDatatype;
+  int _bpp;
+
+public:
+  ImageFormatType dataType() { return _format; }
+  GLenum glFormat() { return _glFormat; }
+  GLenum glInternalFormat() { return _glInternalFormat; }
+  GLenum glDatatype() { return _glDatatype; }
+  int bpp() { return _bpp; }
+
+  ImageFormat(ImageFormatType fmt, GLenum glfmt, GLenum glinternalfmt, GLenum gldatatype, int bpp) {
+    _format = fmt;
+    _glFormat = glfmt;
+    _glInternalFormat = glinternalfmt;
+    _glDatatype = gldatatype;
+    _bpp = bpp;
+  }
+};
+
+class Image {
+private:
+  int _width = 0;
+  int _height = 0;
+  ImageFormat* _format;
+  uptr<char[]> _data;
+
+public:
+  void check() const;
+  int width() const { return _width; }
+  int height() const { return _height; }
+  ImageFormat* format() const { return _format; }
+  char* data() { return _data.get(); }
+
+  Image(int w, int h, ImageFormat* fmt, const char* data = nullptr);
+  virtual ~Image();
+
+  void init(int w, int h, ImageFormat* fmt, const char* data = nullptr);
+  void* pixel(int32_t x, int32_t y);
+  static uptr<Image> crop(Image* img, const box2i& box);
+  static uptr<Image> from_file(std::string path);
+  static void copy(Image* dst, const box2i& dstbox, Image* src, const box2i& srcbox);
+  static uptr<Image> scale(Image* img, float s,  ImageFormat* changefmt = nullptr);
 };
 
 class GLObject {
@@ -161,62 +253,51 @@ protected:
 public:
   GLuint glId() { return _glId; }
 };
-class Image {
-private:
-  int _width = 0;
-  int _height = 0;
-  int _bpp = 0;  // bytes
-  std::unique_ptr<char[]> _data;
 
+class TextureBase : public GLObject {
 public:
-  void check();
-  int width() { return _width; }
-  int height() { return _height; }
-  int bpp() { return _bpp; }
-  char* data() { return _data.get(); }
-
-  Image(int w, int h, int bpp=4, const char* data= nullptr);
-  virtual ~Image();
-
-  void init(int w, int h, int bpp=4, const char* data = nullptr);
-  glm::u8vec4* pixelOff(int32_t x, int32_t y);
-  void copySubImageFrom(const ivec2& myOff, const ivec2& otherOff, const ivec2& size, Image* pOtherImage);
-  static std::unique_ptr<Image> crop(Image* img, int w, int h);
-  static std::unique_ptr<Image> from_file(std::string path);
-};
-class Texture : public GLObject {
-public:
-  Texture();
-  Texture(Image* img, bool mipmaps = false);
-  virtual ~Texture();
-
-  static int calcMipLevels(int w, int h, int minwh = 1);
-  static std::unique_ptr<Texture> singlePixel(vec4 color);
-
-  void copyToGpu(int w, int h, void* data);
-  void copyToGpu(int x, int y, int w, int h, void* data);
-  void bind(int32_t channel);
-  void unbind(int32_t channel);
-};
-class TextureArray : public GLObject {
-private:
-  int _count = 0;
+protected:
   int _width = 0;
   int _height = 0;
   int _levels = 1;
+  ImageFormat* _format;
+  GLenum _type;
 
+  static int calcMipLevels(int w, int h, int minwh = 1);
+  void setStorageMode();
 public:
-  TextureArray();
-  TextureArray(int w, int h, int count, bool mipmaps);
-  TextureArray(std::vector<Image*> imgs, bool mipmaps);
-  virtual ~TextureArray();
+  TextureBase(int w, int h, ImageFormat* format, bool mipmaps, GLenum type);
+  ~TextureBase();
 
-  static std::unique_ptr<TextureArray> singlePixel(const vec4& color, int count);  // array of single pixels
-
-  void copyToGpu(int index, void* data);
-  void copyToGpu(int x, int y, int w, int h, int index, void* data);
   void bind(int32_t channel);
   void unbind(int32_t channel);
+};
+class Texture : public TextureBase {
+public:
+  Texture();
+  Texture(int w, int h, ImageFormat* fmt, bool mipmaps);
+  Texture(Image* img, bool mipmaps = false);
+  virtual ~Texture();
+
+  static uptr<Texture> singlePixel(vec4 color);
+
+  void copyToGpu(int w, int h, const void* data);
+  void copyToGpu(int x, int y, int w, int h, const void* data);
+};
+class TextureArray : public TextureBase {
+private:
+  int _count = 0;
+
+public:
+  TextureArray(int w, int h, ImageFormat* fmt, bool mipmaps, int count);
+  TextureArray(const std::vector<uptr<Image>>& imgs, bool mipmaps);
+  virtual ~TextureArray();
+
+  static uptr<TextureArray> singlePixel(const vec4& color, int count);  // array of single pixels
+
+  void copyToGpu(int index, const void* data);
+  void copyToGpu(int x, int y, int w, int h, int index, const void* data);
+  static void conform( std::vector<uptr<Image>>& imgs);
 };
 class Framebuffer : public GLObject {
 public:
@@ -277,7 +358,7 @@ public:
   };
 
 private:
-  static std::unique_ptr<ShaderMeta> _meta;
+  static uptr<ShaderMeta> _meta;
 
   // std::map<std::string, int> _buffer_bindings;
 
@@ -285,9 +366,9 @@ private:
   std::vector<std::string> _frag_src;
   std::vector<std::string> _geom_src;
 
-  std::vector<std::unique_ptr<BufferBlock>> _uniformBlocks;
-  std::vector<std::unique_ptr<Uniform>> _uniforms;
-  std::vector<std::unique_ptr<BufferBlock>> _ssbos;
+  std::vector<uptr<BufferBlock>> _uniformBlocks;
+  std::vector<uptr<Uniform>> _uniforms;
+  std::vector<uptr<BufferBlock>> _ssbos;
 
   std::string _name;
   ShaderLoadState _state = ShaderLoadState::None;
@@ -332,10 +413,10 @@ public:
 class DrawQuads {
 private:
   std::vector<GpuQuad> _quads;
-  std::unique_ptr<VertexArray> _vao;
-  std::unique_ptr<GpuBuffer> _vbo;
-  std::unique_ptr<GpuBuffer> _ibo;
-  std::unique_ptr<Shader> _shader;
+  uptr<VertexArray> _vao;
+  uptr<GpuBuffer> _vbo;
+  uptr<GpuBuffer> _ibo;
+  uptr<Shader> _shader;
   size_t _index = 0;
   bool _dirty = true;
 
@@ -387,47 +468,47 @@ protected:
   vec3 _scl = vec3(1, 1, 1);
   float _speed = 10;     // 1;
   float _rspeed = 0.5f;  // 0.5f;
-  glm::mat4 _world = mat4(1);
-  glm::vec3 _right = vec3(1, 0, 0);
-  glm::vec3 _up = vec3(0, 1, 0);
-  glm::vec3 _forward = vec3(0, 0, 1);
-  std::vector<std::unique_ptr<Component>> _components;
-  std::vector<std::unique_ptr<Bobj>> _children;
+  mat4 _world = mat4(1);
+  vec3 _right = vec3(1, 0, 0);
+  vec3 _up = vec3(0, 1, 0);
+  vec3 _forward = vec3(0, 0, 1);
+  std::vector<uptr<Component>> _components;
+  std::vector<uptr<Bobj>> _children;
 
 public:
   uint64_t id() { return _id; }
   string_t& name() { return _name; }
-  glm::vec3& up() { return _up; }
-  glm::vec3& right() { return _right; }
-  glm::vec3& forward() { return _forward; }
-  glm::mat4& world() { return _world; }
-  glm::vec3& pos() { return _pos; }
-  glm::quat& rot() { return _rot; }
-  glm::vec3& scl() { return _scl; }
-  std::vector<std::unique_ptr<Bobj>>& children() { return _children; }
+  vec3& up() { return _up; }
+  vec3& right() { return _right; }
+  vec3& forward() { return _forward; }
+  mat4& world() { return _world; }
+  vec3& pos() { return _pos; }
+  quat& rot() { return _rot; }
+  vec3& scl() { return _scl; }
+  std::vector<uptr<Bobj>>& children() { return _children; }
   float& speed() { return _speed; }
   float& rspeed() { return _rspeed; }
-  std::vector<std::unique_ptr<Component>>& components() { return _components; }
+  std::vector<uptr<Component>>& components() { return _components; }
+
+  void lookAt(const vec3&& at);
 
   Bobj(string_t&& name);
   virtual void update(float dt, mat4* parent = nullptr);
 };
 class Camera : public Bobj {
-  vec3 _lookat;
   float _fov = 40.0f;
   float _far = 1000.0f;
-  std::unique_ptr<GpuCamera> _gpudata;
-  std::unique_ptr<GpuBuffer> _buffer;
+  uptr<GpuCamera> _gpudata;
+  uptr<GpuBuffer> _buffer;
 
 public:
-  glm::mat4& proj();
-  glm::mat4& view();
+  mat4& proj();
+  mat4& view();
 
   GpuBuffer* uniformBuffer();
 
   Camera(string_t&& name);
   void updateViewport(int width, int height);
-  void lookAt(vec3&& at);
   virtual void update(float dt, mat4* parent = nullptr) override;
 };
 class Component {
@@ -453,9 +534,9 @@ class Scene {
 
 public:
   std::shared_ptr<Camera> activeCamera() { return _activeCamera; }
-  std::unique_ptr<Texture> _color;
-  std::unique_ptr<Texture> _normal_depth;
-  std::unique_ptr<TextureArray> _test_array; //we're going to use arrays
+  uptr<Texture> _color;
+  uptr<Texture> _normal_depth;
+  uptr<TextureArray> _test_array;  // we're going to use arrays
 
   Scene();
   void update(float dt);
@@ -473,14 +554,14 @@ private:
   int _height = 0;
   GLFWwindow* _window = nullptr;
   WindowState _state = WindowState::Created;
-  std::unique_ptr<Input> _input;
-  std::unique_ptr<DrawQuads> _drawQuads;
+  uptr<Input> _input;
+  uptr<DrawQuads> _drawQuads;
   std::shared_ptr<Scene> _scene = nullptr;
 
   std::vector<GpuObj> _objs;
-  std::unique_ptr<Shader> _objShader;
-  std::unique_ptr<GpuBuffer> _objBuf;
-  std::unique_ptr<VertexArray> _objVao;
+  uptr<Shader> _objShader;
+  uptr<GpuBuffer> _objBuf;
+  uptr<VertexArray> _objVao;
 
   void do_input();
   void toggleFullscreen();
@@ -506,6 +587,43 @@ public:
   bool BreakOnGLError = true;
   bool Debug_Print_Shader_Uniform_Details_Verbose_NotFound = true;
 };
+
+#pragma endregion
+#pragma region B26
+
+class b2_objdata {
+public:
+  int32_t _id = -1;
+  std::string _name = "";
+  std::vector<b2_action> _actions;
+  void deserialize(BinaryFile* bf);
+};
+class b2_action {
+public:
+  int32_t _id = -1;
+  std::string _name = "";
+  std::vector<b2_frame> _frames;
+  void deserialize(BinaryFile* bf);
+};
+class b2_frame {
+public:
+  float _seq = -1;
+  std::string _name = "";
+  int32_t _texid = -1;
+  int32_t _x = -1;
+  int32_t _y = -1;
+  int32_t _w = -1;
+  int32_t _h = -1;
+  void deserialize(BinaryFile* bf);
+};
+class b2_mtex {
+public:
+  int32_t _texid = -1;
+  std::vector<std::string> _images;
+  void deserialize(BinaryFile* bf);
+};
+
+#pragma endregion
 
 }  // namespace B26D
 

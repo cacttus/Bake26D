@@ -6,7 +6,7 @@
 #   ___x='/home/mario/git/Bake26D/Bake26.py';exec(compile(open(___x).read(), ___x, 'exec'))
 
 # terminal:
-#  clear; ~/Desktop/apps/blender*/blender -b --log-level 0 -P ~/git/Bake26D/src/Bake26.py  -- -i ~/git/Bake26D/assets/ -o ~/git/Bake26D/output -l ~/git/Bake26D/assets/_library.blend -p
+#  clear; ~/Desktop/apps/blender*/blender -b --log-level 0 -P ~/git/Bake26D/src/Bake26.py  -- -i ~/git/Bake26D/assets/ -o ~/git/Bake26D/b26out -l ~/git/Bake26D/assets/_library.blend -p
 #
 # Packing:
 #   Note: Image packing requires blender to have PIL which requires run these commands

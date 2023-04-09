@@ -29,18 +29,20 @@ std::string Log::CC_PINK = "35";
 std::string Log::CC_CYAN = "36";
 std::string Log::CC_WHITE = "37";
 std::string Log::CC_NORMAL = "39";
-std::map<GLFWwindow*, std::unique_ptr<Window>> Gu::_windows;
+std::map<GLFWwindow*, uptr<Window>> Gu::_windows;
 path_t Gu::_appPath = "";
 path_t Gu::_assetsPath = "";
 Window* Gu::_context = nullptr;
-std::unique_ptr<AppConfig> Gu::_appConfig;
+uptr<AppConfig> Gu::_appConfig;
 uint64_t Bobj::s_idgen = 1;
-std::unique_ptr<Shader::ShaderMeta> Shader::_meta;
+uptr<Shader::ShaderMeta> Shader::_meta;
+std::map<ImageFormatType, uptr<ImageFormat>> Gu::_imageFormats;
 
 #pragma endregion
 #pragma region Log
 
 void Log::err(std::string s, const char* file, int line) { _output(CC_RED, false, "E", file, line, s); }
+void Log::warn(std::string s, const char* file, int line) { _output(CC_YELLOW, false, "W", file, line, s); }
 void Log::dbg(std::string s, const char* file, int line) { _output(CC_CYAN, false, "D", file, line, s); }
 void Log::inf(std::string s, const char* file, int line) { _output(CC_WHITE, false, "I", file, line, s); }
 void Log::exception(Exception ex) {
@@ -63,6 +65,24 @@ std::string Log::_header(std::string color, bool bold, std::string type, const c
 #pragma endregion
 #pragma region Gu
 
+void Gu::initGlobals(std::string exe_path) {
+  _appPath = path_t(exe_path).parent_path();
+  _assetsPath = _appPath / path_t("../../data/");
+  _appConfig = std::make_unique<AppConfig>();
+
+  // Most likely 3 components not supported in array textures so just adding 4 would make it ok.
+
+  _imageFormats.insert(std::make_pair(ImageFormatType::R16, std::make_unique<ImageFormat>(ImageFormatType::R16, GL_RED, GL_R16F, GL_FLOAT, sizeof(float) * 1)));
+  _imageFormats.insert(std::make_pair(ImageFormatType::R32, std::make_unique<ImageFormat>(ImageFormatType::R32, GL_RED, GL_R32F, GL_FLOAT, sizeof(float) * 1)));
+  _imageFormats.insert(std::make_pair(ImageFormatType::RGB8, std::make_unique<ImageFormat>(ImageFormatType::RGB8, GL_RGB, GL_RGB8, GL_UNSIGNED_BYTE, sizeof(int8_t) * 3)));
+  _imageFormats.insert(std::make_pair(ImageFormatType::RGBA8, std::make_unique<ImageFormat>(ImageFormatType::RGBA8, GL_RGBA, GL_RGBA8, GL_UNSIGNED_BYTE, sizeof(int8_t) * 4)));
+  _imageFormats.insert(std::make_pair(ImageFormatType::RGBA16, std::make_unique<ImageFormat>(ImageFormatType::RGBA16, GL_RGBA, GL_RGBA16F, GL_FLOAT, sizeof(int16_t) * 4)));
+  _imageFormats.insert(std::make_pair(ImageFormatType::RGBA32, std::make_unique<ImageFormat>(ImageFormatType::RGBA32, GL_RGBA, GL_RGBA32F, GL_FLOAT, sizeof(float) * 4)));
+  // depth internal may be wrong (probahbl not oging to use anyway)
+  //_imageFormats.insert(std::make_pair(ImageFormatType::DEPTH16, std::make_unique<ImageFormat>(ImageFormatType::DEPTH16, GL_DEPTH_COMPONENT16, GL_RG, GL_UNSIGNED_SHORT, sizeof(float))));
+  //_imageFormats.insert(std::make_pair(ImageFormatType::DEPTH24, std::make_unique<ImageFormat>(ImageFormatType::DEPTH24, GL_DEPTH_COMPONENT24, GL_RED, GL_UNSIGNED_INT, sizeof(float))));
+  _imageFormats.insert(std::make_pair(ImageFormatType::DEPTH32, std::make_unique<ImageFormat>(ImageFormatType::DEPTH32, GL_DEPTH_COMPONENT32F, GL_R32F, GL_FLOAT, sizeof(float))));
+}
 int Gu::run(int argc, char** argv) {
   int ret_code = 0;
   try {
@@ -151,10 +171,15 @@ Window* Gu::getWindow(GLFWwindow* win) {
   Raise("could not find window given GLFW window ");
   return nullptr;
 }
-void Gu::initGlobals(std::string exe_path) {
-  _appPath = path_t(exe_path).parent_path();
-  _assetsPath = _appPath / path_t("../../data/");
-  _appConfig = std::make_unique<AppConfig>();
+ImageFormat* Gu::imageFormat(ImageFormatType fmt, bool throwifnotfound) {
+  auto it = _imageFormats.find(fmt);
+  if (it == _imageFormats.end()) {
+    if (throwifnotfound) {
+      Raise("Value not found.");
+    }
+    return nullptr;
+  }
+  return it->second.get();
 }
 std::string Gu::pad(std::string st, int width, char padchar) {
   std::ostringstream out;
@@ -299,37 +324,46 @@ int Gu::printDebugMessages(string_t& ret) {
   }
   return level;
 }
+
 #pragma endregion
 #pragma region Image
 
-Image::Image(int w, int h, int bpp, const char* data) {
-  init(w, h, bpp, data);
+Image::Image(int w, int h, ImageFormat* fmt, const char* data) {
+  init(w, h, fmt, data);
 }
-Image::~Image() {}
-void Image::init(int w, int h, int bpp, const char* data) {
-  Assert(bpp > 0);
+Image::~Image() {
+  Gu::trap();
+}
+void Image::init(int w, int h, ImageFormat* fmt, const char* data) {
   Assert(w > 0);
   Assert(h > 0);
   _width = w;
   _height = h;
-  _bpp = bpp;
-  size_t len = w * h * bpp;
+  _format = fmt;
+  size_t len = w * h * format()->bpp();
   _data = std::make_unique<char[]>(len);
   if (data != nullptr) {
     memcpy(_data.get(), data, len);
   }
 }
-void Image::check() {
+void Image::check() const {
   Assert(this->_width > 0);
   Assert(this->_height > 0);
   Assert(this->_data != nullptr);
 }
-std::unique_ptr<Image> Image::from_file(std::string path) {
-  int w = 0, h = 0, n = 0;
-  auto* data = stbi_load(path.c_str(), &w, &h, &n, 4);
+uptr<Image> Image::from_file(std::string path) {
+  int w = 0, h = 0, bp = 0;
+  // note if you add req comp = 4 for bpp - then the returned bpp VALUE will be the actual BPP, but
+  // the actual IMAGE will have been converted to the req comp
+  bool force_4bpp = true;
+  auto* data = stbi_load(path.c_str(), &w, &h, &bp, force_4bpp ? 4 : 0);
   if (data != NULL) {
-    msg(std::string() + "Loaded " + path + " w=" + std::to_string(w) + " h=" + std::to_string(h) + "");
-    auto img = std::make_unique<Image>(w, h, n, (char*)data);
+    msg(std::string() + "Loaded " + path + " w=" + w + " h=" + h + " bpp=" + bp);
+    bp = force_4bpp ? 4 : bp;
+    Assert(bp == 3 || bp == 4);
+    auto fmtt = bp == 3 ? ImageFormatType::RGB8 : ImageFormatType::RGBA8;
+    auto fmt = Gu::imageFormat(fmtt);
+    auto img = std::make_unique<Image>(w, h, fmt, (char*)data);
     stbi_image_free(data);
     return img;
   }
@@ -338,56 +372,148 @@ std::unique_ptr<Image> Image::from_file(std::string path) {
   }
   return nullptr;
 }
-std::unique_ptr<Image> Image::crop(Image* img, int w, int h) {
-  auto pt = std::make_unique<Image>(w, h, 4);
-  pt->copySubImageFrom(ivec2(0, 0), ivec2(0, 0), ivec2(w, h), img);
-  return pt;
+uptr<Image> Image::scale(Image* img, float s, ImageFormat* changefmt) {
+  Assert(img != nullptr);
+  Assert(s > 0);
+
+  auto fmt = changefmt != nullptr ? changefmt : img->format();
+  auto dst = std::make_unique<Image>(floor((float)img->width() * s), floor((float)img->height() * s), fmt);
+  auto srcbox = box2i(0, 0, img->width(), img->height());
+  auto dstbox = box2i(0, 0, dst->width(), dst->height());
+  Image::copy(dst.get(), dstbox, img, srcbox);
+  return dst;
 }
-void Image::copySubImageFrom(const ivec2& myOff, const ivec2& otherOff, const ivec2& size, Image* pOtherImage) {
-  if (_data == NULL) {
-    Raise("Copy SubImage 2 - From image was not allocated");
+uptr<Image> Image::crop(Image* img, const box2i& region) {
+  Assert(img != nullptr);
+  auto dst = std::make_unique<Image>(region.width(), region.height(), img->format());
+  auto dstbox = box2i(0, 0, region.width(), region.height());
+  Image::copy(dst.get(), dstbox, img, region);
+  return dst;
+}
+void Image::copy(Image* dst, const box2i& dstbox, Image* src, const box2i& srcbox) {
+  Assert(dst != nullptr);
+  Assert(src != nullptr);
+  Assert(src->_data != nullptr);
+  Assert(dst->_data != nullptr);
+  Assert(src->format()->bpp() > 0);
+  Assert(dst->format()->bpp() > 0);
+  Assert(src->format()->bpp() <= 4);  // for now
+  Assert(dst->format()->bpp() <= 4);
+  Assert(src->width() > 0);
+  Assert(src->height() > 0);
+  Assert(dst->width() > 0);
+  Assert(dst->height() > 0);
+  Assert(dstbox.width() > 0);
+  Assert(dstbox.height() > 0);
+  Assert(srcbox.width() > 0);
+  Assert(srcbox.height() > 0);
+
+  auto dstbounds = box2i(0, 0, dst->width(), dst->height());
+  auto srcbounds = box2i(0, 0, src->width(), src->height());
+  auto c_dst = dstbox.clip(dstbounds);
+  auto c_src = srcbox.clip(srcbounds);
+
+  Assert(c_dst.width() > 0);
+  Assert(c_dst.height() > 0);
+
+  float incx_dst = 0, incx_src = 0;
+  float incy_dst = 0, incy_src = 0;
+  int row_x = 0, row_y = 0;
+
+  if (dstbox.width() > srcbox.width()) {
+    row_x = srcbox.width();
+    incx_src = 1;
+    incx_dst = (float)dstbox.width() / (float)srcbox.width();
   }
-  if (pOtherImage == NULL) {
-    Raise("Copy SubImage 1 - Input Image was null.");
+  else {
+    row_x = dstbox.width();
+    incx_dst = 1;
+    incx_src = (float)srcbox.width() / (float)dstbox.width();
   }
-  if (pOtherImage->_data == NULL) {
-    Raise("Copy SubImage 3 - Input Image TO was not allocated");
+  if (dstbox.height() > srcbox.height()) {
+    row_y = srcbox.height();
+    incy_src = 1;
+    incy_dst = (float)dstbox.height() / (float)srcbox.height();
   }
-  // size constraint validation
-  if (myOff.x < -1 || myOff.y < -1) {
-    Raise("Copy SubImage 4");
-  }
-  if (myOff.x >= (int)_width || myOff.y >= (int)_height) {
-    Raise("Copy SubImage 5.  This hits if you put too many textures in the db_atlas.dat file.  \
-        There can only be XxX textres (usually 16x16)");
-  }
-  if (otherOff.x < 0 || otherOff.y < 0) {
-    Raise("Copy SubImage 6");
-  }
-  if (otherOff.x >= pOtherImage->_width || otherOff.y >= pOtherImage->_height) {
-    Raise("Copy SubImage 7");
+  else {
+    row_y = dstbox.height();
+    incy_dst = 1;
+    incy_src = (float)srcbox.height() / (float)dstbox.height();
   }
 
-  ivec2 scanPos = myOff;
-  int32_t scanLineByteSize = size.x * _bpp;
-  int32_t nLines = size.y;
+  float sx = (float)srcbox._min.x;
+  float sy = (float)srcbox._min.y;
+  float dx = (float)dstbox._min.x;
+  float dy = (float)dstbox._min.y;
 
-  Assert(scanLineByteSize >= 0);
+  u8vec4 fillcolor = u8vec4(0, 0, 0, 0);
+  int copy_bpp = glm::min(src->format()->bpp(), dst->format()->bpp());
+  size_t dbg_bytes_copied = 0;
 
-  for (int iScanLine = 0; iScanLine < nLines; ++iScanLine) {
-    void* vdst = (void*)pixelOff(scanPos.x, scanPos.y + iScanLine);
-    void* vsrc = (void*)pOtherImage->pixelOff(otherOff.x, otherOff.y + iScanLine);  // Note: we do this here because the tga images are flipped upside down for some reason in the texture composer.
-    memcpy(vdst, vsrc, scanLineByteSize);
+  for (int yi = 0; yi < row_y; yi++) {
+    for (int xi = 0; xi < row_x; xi++) {
+      int idx = (int)glm::round(dx);
+      int idy = (int)glm::round(dy);
+      int isx = (int)glm::round(sx);
+      int isy = (int)glm::round(sy);
+
+      if (c_dst.contains_LT_inclusive(ivec2(idx, idy))) {
+        void* dpx = dst->pixel(idx, idy);
+
+        void* spx = nullptr;
+        if (c_src.contains_LT_inclusive(ivec2(isx, isy))) {
+          spx = src->pixel(isx, isy);
+        }
+        else {
+          spx = &fillcolor;
+          Gu::trap();
+        }
+
+        memcpy(dpx, spx, copy_bpp);
+
+        // debug
+        // if (copy_bpp == 4) {
+        //   char p_s0 = *((char*)spx + 0);
+        //   char p_s1 = *((char*)spx + 1);
+        //   char p_s2 = *((char*)spx + 2);
+        //   char p_s3 = *((char*)spx + 3);
+        //   char p_d0 = *((char*)dpx + 0);
+        //   char p_d1 = *((char*)dpx + 1);
+        //   char p_d2 = *((char*)dpx + 2);
+        //   char p_d3 = *((char*)dpx + 3);
+        //   if (*((char*)spx + 3) == 0) {
+        //     *((char*)dpx + 0) = 255;
+        //     *((char*)dpx + 1) = 0;
+        //     *((char*)dpx + 2) = 255;
+        //     *((char*)dpx + 3) = 255;
+        //   }
+        // }
+
+        dbg_bytes_copied += copy_bpp;
+      }
+      else {
+        Gu::trap();
+      }
+      sx += incx_src;
+      dx += incx_dst;
+    }
+    sx = 0;
+    dx = 0;
+    sy += incy_src;
+    dy += incy_dst;
   }
 }
-glm::u8vec4* Image::pixelOff(int32_t x, int32_t y) {
+void* Image::pixel(int32_t x, int32_t y) {
   Assert(_data != nullptr);
-  Assert(x < (int32_t)_width && x >= 0);
-  Assert(y < (int32_t)_height && y >= 0);
+  Assert(x >= 0, std::to_string(x) + " " + std::to_string(_width));
+  Assert(y >= 0, std::to_string(y) + " " + std::to_string(_height));
+  Assert(x < _width, std::to_string(x) + " " + std::to_string(_width));
+  Assert(y < _height, std::to_string(y) + " " + std::to_string(_height));
 
-  size_t off = (y * _width + x) * _bpp;  // vofftos((size_t)x, (size_t)y, (size_t)_width);
-
-  return (glm::u8vec4*)((char*)_data.get() + off);  // unsafe cast
+  size_t off = (y * _width + x) * _format->bpp();  // vofftos((size_t)x, (size_t)y, (size_t)_width);
+  char* dg = (char*)_data.get();
+  void* pt = (void*)(dg + off);  // unsafe cast
+  return pt;
 }
 #pragma endregion
 #pragma region Shader
@@ -703,25 +829,6 @@ std::vector<std::string> Shader::processSource(path_t& loc, ShaderStage stage) {
         buftype = "buffer";  // ssbo
         arrsuffix = "[]";
         std = "std430";
-
-        // location = "location"; //testing - this may not matter as we set ssbo bindign points manually
-        // TODO: REMOVE THIS - don't set location=.. for buffers we generate this manualy
-        //  generate binding this is CROSS SHADER for Vs/gs/etc
-        // note these will be changed when we process the metadata but they must match
-        //         auto bite = _buffer_bindings.find(ufName);
-        //         if (bite == _buffer_bindings.end()) {
-        //           int next_binding = 0;
-        //           auto ite = std::max_element(_buffer_bindings.begin(), _buffer_bindings.end(), [](const auto& a, const auto& b) -> bool { return a.second < b.second; });
-        //           if (ite != _buffer_bindings.end()) {
-        //             next_binding = ite->second + 1;
-        //           }
-        //
-        //           binding = next_binding;
-        //           _buffer_bindings.insert(std::make_pair(ufName, binding));
-        //         }
-        //         else {
-        //           binding = bite->second;
-        //         }
       }
       if (src_raw.find(ufName) != std::string::npos) {
         // str_buffers.append("layout(" + std + ", " + location + " = " + std::to_string(binding) + ") " + buftype + " " + ufName + "_Block {\n");
@@ -807,7 +914,7 @@ void Shader::setTextureUf(TextureArray* tex, GLuint channel, string_t loc) {
   CheckErrorsDbg();
 }
 #pragma endregion
-#pragma region ALL OTHER CLASSES
+#pragma region VertexArray
 
 VertexArray::VertexArray() {
   glCreateVertexArrays(1, &_glId);
@@ -833,6 +940,10 @@ void VertexArray::setAttrib(int attr_idx, int attr_compsize, GLenum attr_datatyp
   glVertexArrayVertexBuffer(_glId, binding_index, gbuf->glId(), 0, stride);
   // glVertexArrayElementBuffer(_vao->glId(), _ibo->glId());
 }
+
+#pragma endregion
+#pragma region GpuBuffer
+
 GpuBuffer::GpuBuffer(size_t size, void* data, uint32_t flags) {
   glCreateBuffers(1, &_glId);
   // glNamedBufferStorage(_glId, size, data, flags);//for immutable buffers
@@ -848,50 +959,57 @@ void GpuBuffer::copyToGpu(size_t size, void* data, size_t offset) {
   CheckErrorsDbg();
 }
 
-Texture::Texture() {
-  glCreateTextures(GL_TEXTURE_2D, 1, &_glId);
-}
-Texture::Texture(Image* img, bool mipmaps) : Texture() {
-  Assert(img);
-  copyToGpu(img->width(), img->height(), img->data());
+#pragma endregion
+#pragma region TextureBase
+
+TextureBase::TextureBase(int w, int h, ImageFormat* fmt, bool mipmaps, GLenum type) {
+  _width = w;
+  _height = h;
+  _type = type;
+  _format = fmt;
+  _levels = mipmaps ? Texture::calcMipLevels(_width, _height) : 1;
+  Assert(_levels > 0);
+  glCreateTextures(_type, 1, &_glId);
+
+  glTextureParameteri(_glId, GL_TEXTURE_BASE_LEVEL, 0);
+  glTextureParameteri(_glId, GL_TEXTURE_MAX_LEVEL, _levels - 1);
+  if (_levels > 1) {
+    glTextureParameterf(_glId, GL_TEXTURE_MIN_FILTER, GL_LINEAR_MIPMAP_LINEAR);
+    glTextureParameterf(_glId, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+  }
+  else {
+    glTextureParameterf(_glId, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
+    glTextureParameterf(_glId, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+  }
   CheckErrorsDbg();
 }
-Texture::~Texture() {
+TextureBase::~TextureBase() {
   glDeleteTextures(1, &_glId);
 }
-std::unique_ptr<Texture> Texture::singlePixel(vec4 color) {
-  std::unique_ptr<Texture> ret = std::make_unique<Texture>();
-
-  unsigned char pix[4];
-  pix[0] = 255, pix[1] = 0, pix[2] = 255, pix[3] = 255;
-  ret->copyToGpu(1, 1, (void*)pix);
-  return ret;
-}
-void Texture::copyToGpu(int w, int h, void* data) {
-  copyToGpu(0, 0, w, h, data);
-}
-void Texture::copyToGpu(int x, int y, int w, int h, void* data) {
-  int mlevels = Texture::calcMipLevels(w, h);
-
-  glTextureStorage2D(_glId, mlevels, GL_RGBA8, w, h);
-  glTextureSubImage2D(_glId, 0, 0, 0, w, h, GL_RGBA, GL_UNSIGNED_BYTE, (void*)data);
-  if (mlevels > 1) {
-    glGenerateTextureMipmap(_glId);
+void TextureBase::setStorageMode() {
+ // glActiveTexture(GL_TEXTURE0);  // Needed?
+ // glBindTexture(_type, _glId);
+  if (_format->bpp() % 8 == 0) {
+    glPixelStorei(GL_UNPACK_ALIGNMENT, 8);
   }
-  glTextureParameteri(_glId, GL_TEXTURE_BASE_LEVEL, 0);
-  glTextureParameteri(_glId, GL_TEXTURE_MAX_LEVEL, mlevels - 1);  // max(0, mips - 1));
-  // TODO: mips
-  glTextureParameterf(_glId, GL_TEXTURE_MIN_FILTER, GL_NEAREST);  // GL_LINEAR_MIPMAP_LINEAR);
-  glTextureParameterf(_glId, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
-  CheckErrorsDbg();
+  if (_format->bpp() % 4 == 0) {
+    glPixelStorei(GL_UNPACK_ALIGNMENT, 4);
+  }
+  if (_format->bpp() % 2 == 0) {
+    glPixelStorei(GL_UNPACK_ALIGNMENT, 2);
+  }
+  else {
+    glPixelStorei(GL_UNPACK_ALIGNMENT, 1);
+  }
+//  glBindTexture(_type, 0);
 }
-void Texture::bind(int32_t channel) {
+void TextureBase::bind(int32_t channel) {
   glBindTextureUnit(channel, _glId);
 }
-void Texture::unbind(int32_t channel) {
+void TextureBase::unbind(int32_t channel) {
   glBindTextureUnit(channel, 0);
 }
-int Texture::calcMipLevels(int w, int h, int minwh) {
+int TextureBase::calcMipLevels(int w, int h, int minwh) {
   float mwidth = w;
   float mheight = h;
   int mlevels = 0;
@@ -903,34 +1021,55 @@ int Texture::calcMipLevels(int w, int h, int minwh) {
   return mlevels;
 }
 
-TextureArray::TextureArray() {
-  glCreateTextures(GL_TEXTURE_2D_ARRAY, 1, &_glId);
+#pragma endregion
+#pragma region Texture
+
+Texture::Texture(int w, int h, ImageFormat* fmt, bool mipmaps) : TextureBase(w, h, fmt, mipmaps, GL_TEXTURE_2D) {
 }
-TextureArray::TextureArray(int w, int h, int count, bool mipmaps) : TextureArray() {
-  _width = w;
-  _height = h;
+Texture::Texture(Image* img, bool mipmaps) : Texture(img->width(), img->height(), img->format(), mipmaps) {
+  Assert(img);
+  copyToGpu(img->width(), img->height(), img->data());
+  CheckErrorsDbg();
+}
+Texture::~Texture() {
+}
+uptr<Texture> Texture::singlePixel(vec4 color) {
+  uptr<Texture> ret = std::make_unique<Texture>(1, 1, Gu::imageFormat(ImageFormatType::RGBA8), false);
+
+  unsigned char pix[4];
+  pix[0] = 255, pix[1] = 0, pix[2] = 255, pix[3] = 255;
+  ret->copyToGpu(1, 1, (void*)pix);
+  return ret;
+}
+void Texture::copyToGpu(int w, int h, const void* data) {
+  copyToGpu(0, 0, w, h, data);
+}
+void Texture::copyToGpu(int x, int y, int w, int h, const void* data) {
+  setStorageMode();
+
+  glTextureStorage2D(_glId, _levels, _format->glInternalFormat(), w, h);
+  glTextureSubImage2D(_glId, 0, 0, 0, w, h, _format->glFormat(), _format->glDatatype(), data);
+  if (_levels > 1) {
+    glGenerateTextureMipmap(_glId);
+    CheckErrorsRt();
+  }
+}
+
+#pragma endregion
+#pragma region TextureArray
+
+TextureArray::TextureArray(int w, int h, ImageFormat* fmt, bool mipmaps, int count) : TextureBase(w, h, fmt, mipmaps, GL_TEXTURE_2D_ARRAY) {
   _count = count;
-  _levels = mipmaps ? Texture::calcMipLevels(_width, _height) : 1;
-  Assert(_levels > 0);
-
-  glTextureStorage3D(_glId, _levels, GL_RGBA8, (GLsizei)_width, (GLsizei)_height, (GLsizei)_count);
-  CheckErrorsRt();
-
-  glTextureParameteri(_glId, GL_TEXTURE_BASE_LEVEL, 0);
-  glTextureParameteri(_glId, GL_TEXTURE_MAX_LEVEL, _levels - 1);  // max(0, mips - 1));
-  glTextureParameterf(_glId, GL_TEXTURE_MIN_FILTER, GL_NEAREST);  // GL_LINEAR_MIPMAP_LINEAR);
-  glTextureParameterf(_glId, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+  glTextureStorage3D(_glId, _levels, _format->glInternalFormat(), (GLsizei)_width, (GLsizei)_height, (GLsizei)_count);
   CheckErrorsRt();
 }
-TextureArray::TextureArray(std::vector<Image*> imgs, bool mipmaps) : TextureArray(imgs[0]->width(), imgs[0]->height(), (int)imgs.size(), mipmaps) {
+TextureArray::TextureArray(const std::vector<uptr<Image>>& imgs, bool mipmaps) : TextureArray(imgs[0]->width(), imgs[0]->height(), imgs[0]->format(), mipmaps, (int)imgs.size()) {
   for (int index = 0; index < imgs.size(); index++) {
-    auto img = imgs[index];
-    img->check();
-    if (img->width() != _width || img->height() != _height) {
-      LogWarn("Image size (" + img->width() + "," + img->height() + ") was not equal to base size (" + _width + "," + _height + ")");
-    }
-
-    copyToGpu(index, img->data());
+    imgs.at(index)->check();
+    Assert(imgs.at(index)->format() == _format);
+    Assert(imgs.at(index)->width() == _width, std::string("") + imgs.at(index)->width() + " " + _width);
+    Assert(imgs.at(index)->height() == _height, std::string("") + imgs.at(index)->height() + " " + _height);
+    copyToGpu(index, imgs.at(index)->data());
   }
 
   if (_levels > 1) {
@@ -941,8 +1080,8 @@ TextureArray::TextureArray(std::vector<Image*> imgs, bool mipmaps) : TextureArra
 TextureArray::~TextureArray() {
   glDeleteTextures(1, &_glId);
 }
-std::unique_ptr<TextureArray> TextureArray::singlePixel(const vec4& color, int count) {
-  std::unique_ptr<TextureArray> ret = std::make_unique<TextureArray>(1, 1, count, false);
+uptr<TextureArray> TextureArray::singlePixel(const vec4& color, int count) {
+  uptr<TextureArray> ret = std::make_unique<TextureArray>(1, 1, Gu::imageFormat(ImageFormatType::RGBA8), false, count);
 
   uint8_t pix[4];
   pix[0] = (uint8_t)glm::round(glm::clamp(color.r, 0.0f, 1.0f) * 255.0f);
@@ -954,19 +1093,40 @@ std::unique_ptr<TextureArray> TextureArray::singlePixel(const vec4& color, int c
   }
   return ret;
 }
-void TextureArray::copyToGpu(int index, void* data) {
+void TextureArray::copyToGpu(int index, const void* data) {
   copyToGpu(0, 0, _width, _height, index, data);
 }
-void TextureArray::copyToGpu(int x, int y, int w, int h, int index, void* data) {
-  glTextureSubImage3D(_glId, 0, x, y, index, w, h, 1, GL_RGBA, GL_UNSIGNED_BYTE, (void*)data);
+void TextureArray::copyToGpu(int x, int y, int w, int h, int index, const void* data) {
+  Assert(index < _count);
+  setStorageMode();
+  glTextureSubImage3D(_glId, 0,
+                      x, y, index,
+                      w, h, 1,
+                      _format->glFormat(), _format->glDatatype(), data);
   CheckErrorsDbg();
 }
-void TextureArray::bind(int32_t channel) {
-  glBindTextureUnit(channel, _glId);
+void TextureArray::conform(std::vector<uptr<Image>>& imgs) {
+  // scale images to first tex
+  if (imgs.size() > 1) {
+    for (auto i = 1; i < imgs.size(); i++) {
+      auto sw = (float)imgs[0]->width() / (float)imgs[i]->width();
+      auto sh = (float)imgs[0]->height() / (float)imgs[i]->height();
+      auto ss = glm::min(sw, sh);
+      if (ss < 1.0f) {
+        auto up = Image::scale(imgs[i].get(), ss, imgs[0]->format());
+        auto up2 = Image::crop(up.get(), box2i(0, 0, imgs[0]->width(), imgs[0]->height()));
+        imgs[i].swap(up2);
+      }
+      else if (ss != 1.0f) {
+        auto up2 = Image::crop(imgs[i].get(), box2i(0, 0, imgs[0]->width(), imgs[0]->height()));
+        imgs[i].swap(up2);
+      }
+    }
+  }
 }
-void TextureArray::unbind(int32_t channel) {
-  glBindTextureUnit(channel, 0);
-}
+
+#pragma endregion
+#pragma region Framebuffer
 
 Framebuffer::Framebuffer() {
   glGenFramebuffers(1, &_glId);
@@ -974,6 +1134,9 @@ Framebuffer::Framebuffer() {
 Framebuffer ::~Framebuffer() {
   glDeleteFramebuffers(1, &_glId);
 }
+
+#pragma endregion
+#pragma region Input
 
 Input::Input() {}
 Input::~Input() {}
@@ -1031,6 +1194,9 @@ void Input::update() {
   }
 }
 
+#pragma endregion
+#pragma region DrawQuads
+
 DrawQuads::DrawQuads(uint32_t maxQuads) {
   _shader = std::make_unique<Shader>(Gu::assetpath("shader/draw_quads.vs.glsl"), path_t(""), Gu::assetpath("/shader/draw_quads.fs.glsl"));
 
@@ -1066,9 +1232,9 @@ DrawQuads::DrawQuads(uint32_t maxQuads) {
   glEnableVertexArrayAttrib(_vao->glId(), c_idx);
 
   glVertexArrayAttribFormat(_vao->glId(), v_idx, 3, GL_FLOAT, GL_FALSE, 0);
-  glVertexArrayAttribIFormat(_vao->glId(), i_idx, 1, GL_UNSIGNED_INT, sizeof(glm::vec3));
-  glVertexArrayAttribFormat(_vao->glId(), x_idx, 2, GL_FLOAT, GL_FALSE, sizeof(glm::vec3) + sizeof(uint32_t));
-  glVertexArrayAttribFormat(_vao->glId(), c_idx, 4, GL_FLOAT, GL_FALSE, sizeof(glm::vec3) + sizeof(uint32_t) + sizeof(glm::vec2));
+  glVertexArrayAttribIFormat(_vao->glId(), i_idx, 1, GL_UNSIGNED_INT, sizeof(vec3));
+  glVertexArrayAttribFormat(_vao->glId(), x_idx, 2, GL_FLOAT, GL_FALSE, sizeof(vec3) + sizeof(uint32_t));
+  glVertexArrayAttribFormat(_vao->glId(), c_idx, 4, GL_FLOAT, GL_FALSE, sizeof(vec3) + sizeof(uint32_t) + sizeof(vec2));
 
   glVertexArrayAttribBinding(_vao->glId(), v_idx, vbo_binding_idx);
   glVertexArrayAttribBinding(_vao->glId(), i_idx, vbo_binding_idx);
@@ -1119,25 +1285,25 @@ void DrawQuads::draw(Camera* cam, Texture* tex) {
   _shader->unbind();
 }
 void GpuQuad::zero() {
-  _verts[0]._v = glm::vec3(0, 0, 0);
-  _verts[1]._v = glm::vec3(1, 0, 0);
-  _verts[2]._v = glm::vec3(0, 1, 0);
-  _verts[3]._v = glm::vec3(1, 1, 0);
-  _verts[0]._x = glm::vec2(0, 0);
-  _verts[1]._x = glm::vec2(1, 0);
-  _verts[2]._x = glm::vec2(0, 1);
-  _verts[3]._x = glm::vec2(1, 1);
-  _verts[0]._c = glm::vec4(1, 1, 1, 1);
-  _verts[1]._c = glm::vec4(1, 1, 1, 1);
-  _verts[2]._c = glm::vec4(1, 1, 1, 1);
-  _verts[3]._c = glm::vec4(1, 1, 1, 1);
+  _verts[0]._v = vec3(0, 0, 0);
+  _verts[1]._v = vec3(1, 0, 0);
+  _verts[2]._v = vec3(0, 1, 0);
+  _verts[3]._v = vec3(1, 1, 0);
+  _verts[0]._x = vec2(0, 0);
+  _verts[1]._x = vec2(1, 0);
+  _verts[2]._x = vec2(0, 1);
+  _verts[3]._x = vec2(1, 1);
+  _verts[0]._c = vec4(1, 1, 1, 1);
+  _verts[1]._c = vec4(1, 1, 1, 1);
+  _verts[2]._c = vec4(1, 1, 1, 1);
+  _verts[3]._c = vec4(1, 1, 1, 1);
 }
 void DrawQuads::testMakeQuads() {
   for (int i = 0; i < 1000; i++) {
     GpuQuad* cpy = getQuad();
     cpy->zero();
 
-    glm::vec3 rnd;
+    vec3 rnd;
     rnd.x = Gu::random(-50, 50);
     rnd.y = Gu::random(-50, 50);
     rnd.z = Gu::random(-50, 50);
@@ -1149,7 +1315,7 @@ void DrawQuads::testMakeQuads() {
 
     // color
     for (auto& v : cpy->_verts) {
-      glm::vec4 rnd4;
+      vec4 rnd4;
       rnd4.r = Gu::random(0.1f, 1.0f);
       rnd4.g = Gu::random(0.6f, 1.0f);
       rnd4.b = Gu::random(0.6f, 1.0f);
@@ -1158,33 +1324,27 @@ void DrawQuads::testMakeQuads() {
     }
   }
 }
+#pragma endregion
+#pragma region Camera
 
 Camera::Camera(string_t&& name) : Bobj(std::move(name)), _gpudata(std::make_unique<GpuCamera>()), _buffer(std::make_unique<GpuBuffer>(sizeof(GpuCamera))) {
-  // dummy vals.
-  _pos = vec3(-5, 5, -5);
-  lookAt(vec3(0, 0, 0));
-  updateViewport(800, 600);
 }
 void Camera::updateViewport(int width, int height) {
   _fov = glm::clamp(_fov, 0.1f, 179.9f);
   _gpudata->_proj = glm::perspectiveFov(glm::radians(_fov), (float)width, (float)height, 1.0f, _far);
   _buffer->copyToGpu(sizeof(GpuCamera), _gpudata.get());
-  //_view = glm::lookAt(vec3(10,10,10),vec3(0,0,0), vec3(0,1,0));
 }
-void Camera::lookAt(vec3&& at) {
-  _lookat = at;
-}
+
 void Camera::update(float dt, mat4* parent) {
   Bobj::update(dt, parent);
-  _gpudata->_view = _world;  // glm::lookAt(_pos, _lookat, _up);
-  // todo update basis vectors
-  // msg("forward="+forward());
-  // msg("up="+up());
-  // msg("right="+right());
+  _gpudata->_view = _world;
 }
-glm::mat4& Camera::proj() { return _gpudata->_proj; }
-glm::mat4& Camera::view() { return _gpudata->_view; }
+mat4& Camera::proj() { return _gpudata->_proj; }
+mat4& Camera::view() { return _gpudata->_view; }
 GpuBuffer* Camera::uniformBuffer() { return _buffer.get(); }
+
+#pragma endregion
+#pragma region Bobj
 
 Bobj::Bobj(string_t&& name) {
   _id = s_idgen++;
@@ -1200,9 +1360,9 @@ void Bobj::update(float dt, mat4* parent) {
 
   // compile mat
   _world = parent ? *parent : mat4(1);
+  _world = glm::scale(_world, _scl);
   _world = _world * glm::mat4_cast(_rot);
   _world = glm::translate(_world, _pos);
-  _world = glm::scale(_world, _scl);
 
   // basis
   // msg("world=\n"+_world+"\n");
@@ -1210,6 +1370,29 @@ void Bobj::update(float dt, mat4* parent) {
   _up = glm::normalize(vec3(vec4(0, 1, 0, 1) * _world));
   _forward = glm::normalize(vec3(vec4(0, 0, 1, 1) * _world));
 }
+void Bobj::lookAt(const vec3&& at) {
+  mat4 m;
+  auto e = 0.0000001;
+  auto vat = at - _pos;
+  if (glm::dot(vat, vat) < e * e) {
+    LogWarn("|at-pos| = 0");
+    return;
+  }
+  if (glm::dot(_forward, _forward) < e * e) {
+    LogWarn("|_forward| = 0");
+    return;
+  }
+  vat = glm::normalize(vat);
+  auto axis = glm::cross(_forward, vat);
+  axis = glm::normalize(axis);
+  auto a = glm::acos(glm::dot(vat, _forward));
+  if (a < -e || a > e) {
+    _rot = glm::rotate(_rot, -a, axis);
+  }
+}
+
+#pragma endregion
+#pragma region modifiers
 
 InputController::InputController() {
 }
@@ -1223,6 +1406,7 @@ void InputController::update(Bobj* obj, float delta) {
     return;
   }
 
+  // move character control input
   float ang = (float)(M_PI * 2.0) * obj->rspeed() * delta;
   auto inp = ct->input();
   auto spdmul = inp->pressOrDown(GLFW_KEY_LEFT_SHIFT) || inp->pressOrDown(GLFW_KEY_RIGHT_SHIFT) ? 5.0f : 1.0f;
@@ -1238,7 +1422,18 @@ void InputController::update(Bobj* obj, float delta) {
   if (inp->pressOrDown(GLFW_KEY_RIGHT) || inp->pressOrDown(GLFW_KEY_D)) {
     obj->rot() = glm::rotate(obj->rot(), ang, obj->up());
   }
+
+  // other keys
+  if (inp->press(GLFW_KEY_L)) {
+    obj->lookAt(vec3(0, 0, 0));
+  }
+  if (inp->press(GLFW_KEY_O)) {
+    obj->pos() = vec3(0, 0, 0);
+  }
 }
+
+#pragma endregion
+#pragma region Scene
 
 Scene::Scene() {
   auto normpath = Gu::relpath("../output/mt_normal_depth.png");
@@ -1251,19 +1446,20 @@ Scene::Scene() {
   auto normimg = Image::from_file(normpath.string());
   _normal_depth = std::make_unique<Texture>(normimg.get());
   auto colimg = Image::from_file(colpath.string());
+  colimg = Image::scale(colimg.get(), 0.2136f);
   _color = std::make_unique<Texture>(colimg.get());
 
-  auto imga = Image::from_file(Gu::relpath("../data/tex/kratos.jpg").string());
-  auto imgb = Image::from_file(Gu::relpath("../data/tex/marin.jpg").string());
-  auto bcrp = Image::crop(imgb.get(), imga->width(), imga->height());
+  std::vector<uptr<Image>> images;
+  images.push_back(std::move(Image::from_file(Gu::relpath("../data/tex/Церковь Спаса на Крови.jpg").string())));
+  images.push_back(std::move(Image::from_file(Gu::relpath("../data/tex/stpeter.jpg").string())));
+  images.push_back(std::move(Image::from_file(Gu::relpath("../data/tex/дэвид.jpg").string())));
+  images.push_back(std::move(Image::from_file(Gu::relpath("../data/tex/Сикстинская капелла.jpg").string())));
 
-  std::vector<Image*> images = {imga.get(), bcrp.get()};
-
+  TextureArray::conform(images);
   _test_array = std::make_unique<TextureArray>(images, true);
-
   _activeCamera = std::make_shared<Camera>("MainCamera");
   _activeCamera->components().push_back(std::make_unique<InputController>());
-  _activeCamera->lookAt(vec3(0, 0, 0));
+  _activeCamera->pos() = vec3(0, 2, 10);
   _objects.push_back(_activeCamera);
 }
 void Scene::update(float dt) {
@@ -1294,6 +1490,7 @@ void Scene::loadD26Meta(path_t loc) {
     _objdatas.push_back(ob);
   }
 }
+
 #pragma endregion
 #pragma region MainWindow
 
@@ -1325,7 +1522,7 @@ Window::Window(int w, int h, std::string title, GLFWwindow* share) {
   glfwSwapInterval(0);
 
   glfwSetKeyCallback(_window, [](auto win, auto key, auto code, auto action, auto mods) {
-    auto mw = Gu::getWindow(win);
+    B26D::Window* mw = Gu::getWindow(win);
     Assert(mw);
     Assert(mw->_input);
     if (action == GLFW_PRESS || action == GLFW_RELEASE) {
@@ -1440,23 +1637,41 @@ void Window::initEngine() {
   _drawQuads->testMakeQuads();
   _drawQuads->copyToGpu();
 
-  //obj drawer
-  // no inputs here, vertex-less and buffer only
+  // obj drawer
+  //  no inputs here, vertex-less and buffer only
   _objShader = std::make_unique<Shader>(Gu::assetpath("shader/b26obj.vs.glsl"), Gu::assetpath("/shader/b26obj.gs.glsl"), Gu::assetpath("/shader/b26obj.fs.glsl"));
+
+  // Bobj ob("testobj");
+  // ob.pos()= vec3(-3.25f, 1, 0);
+  // ob.scl()= vec3(3, 3, 3);
+
+  float d = 4;
   GpuObj ob;
   ob._mat = mat4(1.0);
-  ob._mat = glm::translate(ob._mat, vec3(-3.25f, 1, 0));
   ob._mat = glm::scale(ob._mat, vec3(3, 3, 3));
-  ob._tex = vec4(0, 0, 1, 1); //looks like this is upside down could be a data transfer issue. 
+  ob._mat = glm::translate(ob._mat, vec3(-d * 3, 1, 0));
+  ob._tex = vec4(0, 0, 1, 1);  // looks like this is upside down could be a data transfer issue.
   ob._texid = 0;
   _objs.push_back(ob);
   ob._mat = mat4(1.0);
-  ob._mat = glm::translate(ob._mat, vec3(3.25f, 1, 0));
   ob._mat = glm::scale(ob._mat, vec3(3, 3, 3));
+  ob._mat = glm::translate(ob._mat, vec3(-d * 2, 1, 0));
   ob._tex = vec4(0, 0, 1, 1);
   ob._texid = 1;
-  ob._texid = 1;
-  _objs.push_back(ob);  
+  _objs.push_back(ob);
+  ob._mat = mat4(1.0);
+  ob._mat = glm::scale(ob._mat, vec3(3, 3, 3));
+  ob._mat = glm::translate(ob._mat, vec3(-d * 1, 1, 0));
+  ob._tex = vec4(0, 0, 1, 1);
+  ob._texid = 2;
+  _objs.push_back(ob);
+  ob._mat = mat4(1.0);
+  ob._mat = glm::scale(ob._mat, vec3(3, 3, 3));
+  ob._mat = glm::translate(ob._mat, vec3(-d * 0, 1, 0));
+  ob._tex = vec4(0, 0, 1, 1);
+  ob._texid = 3;
+  _objs.push_back(ob);
+
   _objBuf = std::make_unique<GpuBuffer>(sizeof(GpuObj) * _objs.size(), _objs.data());
   _objVao = std::make_unique<VertexArray>();
 

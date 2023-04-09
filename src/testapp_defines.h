@@ -83,19 +83,18 @@ namespace B26D {
 #define LogInfo(msg) \
   B26D::Log::inf(std::string() + msg, __FILE__, __LINE__)
 #define LogWarn(msg) \
-  B26D::Log::err(std::string() + msg, __FILE__, __LINE__)
+  B26D::Log::warn(std::string() + msg, __FILE__, __LINE__)
 #define LogError(msg) \
   B26D::Log::err(std::string() + msg, __FILE__, __LINE__)
 #define msg(msg) LogInfo(msg)
-
-#define Assert(__x)                                                       \
-  do {                                                                    \
-    if (!(__x)) {                                                         \
-      std::string str = std::string("Runtime Assertion Failed: ") + #__x; \
-      Log::print(str);                                                    \
-      B26D::Gu::debugBreak();                                             \
-      Raise(str);                                                         \
-    }                                                                     \
+#define Assert(__x, ...)                                                                                                                                                               \
+  do {                                                                                                                                                                                 \
+    if (!(__x)) {                                                                                                                                                                      \
+      std::string str = std::string("Runtime Assertion Failed: ") + std::string(#__x) + (std::string(__VA_ARGS__).length() == 0 ? "" : (std::string(" -> ") + std::string(__VA_ARGS__))); \
+      Log::print(str);                                                                                                                                                                 \
+      B26D::Gu::debugBreak();                                                                                                                                                          \
+      Raise(str);                                                                                                                                                                      \
+    }                                                                                                                                                                                  \
   } while (0);
 
 #define Raise(__str) throw B26D::Exception(__FILE__, __LINE__, (__str))
@@ -133,7 +132,26 @@ typedef glm::ivec4 ivec4;
 typedef glm::uvec2 uvec2;
 typedef glm::uvec3 uvec3;
 typedef glm::uvec4 uvec4;
+typedef glm::u8vec4 u8vec4;
 
+template <typename Tx>
+using uptr = std::unique_ptr<Tx>;
+template <typename Tx>
+using sptr = std::shared_ptr<Tx>;
+
+#pragma endregion
+#pragma region enums
+
+enum class ImageFormatType { RGBA8,
+                             RGB8,
+                             RGBA16,
+                             RGBA32,
+                             R16,
+                             R32,
+                             DEPTH16,
+                             DEPTH24,
+                             DEPTH32,
+};
 
 #pragma endregion
 #pragma region forward decl
@@ -141,26 +159,32 @@ typedef glm::uvec4 uvec4;
 class Log;
 class Window;
 class Exception;
-class Gu;
-class Image;
-class Shader;
-class b2_objdata;
-class b2_action;
-class b2_frame;
-class b2_mtex;
+
 class BinaryFile;
+
+class Gu;
+class AppConfig;
+
+class Image;
+class ImageFormat;
+class Shader;
+class GpuBuffer;
+class Texture;
+class VertexArray;
+
 class Bobj;
 class Camera;
 class Component;
-class Texture;
-class VertexArray;
-class GpuBuffer;
-class AppConfig;
 class Scene;
 
 struct GpuQuad;
 struct GpuQuadVert;
 struct GpuCamera;
+
+class b2_objdata;
+class b2_action;
+class b2_frame;
+class b2_mtex;
 
 #pragma endregion
 #pragma region string extensions
