@@ -13,6 +13,7 @@
 #include <functional>
 #include <math.h>
 #include <memory>
+#include <unordered_set>
 // #include <format>
 
 #include <GL/glew.h>
@@ -35,10 +36,8 @@
 #endif
 
 namespace std {
-
 std::string to_string(const char* __val);
 std::string to_string(const GLubyte* __val);
-
 }  // namespace std
 
 namespace glm {
@@ -48,6 +47,39 @@ inline float clamp(float x, float _min, float _max) {
 inline double clamp(double x, double _min, double _max) {
   return glm::max(glm::min(x, _max), _min);
 }
+template <typename Tx, qualifier Qx, int Dx>
+inline bool vec_gt(vec<Dx, Tx, Qx> const& x, vec<Dx, Tx, Qx> const& y) {
+  for (length_t i = 0; i < x.length(); ++i)
+    if (!(x[i] > y[i])) {
+      return false;
+    }
+  return true;
+}
+template <typename Tx, qualifier Qx, int Dx>
+inline bool vec_gte(vec<Dx, Tx, Qx> const& x, vec<Dx, Tx, Qx> const& y) {
+  for (length_t i = 0; i < x.length(); ++i)
+    if (!(x[i] >= y[i])) {
+      return false;
+    }
+  return true;
+}
+template <typename Tx, qualifier Qx, int Dx>
+inline bool vec_lt(vec<Dx, Tx, Qx> const& x, vec<Dx, Tx, Qx> const& y) {
+  for (length_t i = 0; i < x.length(); ++i)
+    if (!(x[i] < y[i])) {
+      return false;
+    }
+  return true;
+}
+template <typename Tx, qualifier Qx, int Dx>
+inline bool vec_lte(vec<Dx, Tx, Qx> const& x, vec<Dx, Tx, Qx> const& y) {
+  for (length_t i = 0; i < x.length(); ++i)
+    if (!(x[i] <= y[i])) {
+      return false;
+    }
+  return true;
+}
+
 }  // namespace glm
 
 namespace B26D {
@@ -67,34 +99,52 @@ namespace B26D {
 // #define BRO_USE_WINSOCK
 #endif
 
-#ifndef M_PI
-#define M_PI 3.14159265358979323846264338327950
-#endif
 #define OS_NOT_SUPPORTED #pragma message("OS not supported")
-
 #define DOES_NOT_OVERRIDE
 
 #define __inout_
 #define __in_
 #define __out_
 
-#define LogDebug(msg) \
-  B26D::Log::dbg(std::string() + msg, __FILE__, __LINE__)
-#define LogInfo(msg) \
-  B26D::Log::inf(std::string() + msg, __FILE__, __LINE__)
-#define LogWarn(msg) \
-  B26D::Log::warn(std::string() + msg, __FILE__, __LINE__)
-#define LogError(msg) \
-  B26D::Log::err(std::string() + msg, __FILE__, __LINE__)
+#define LogDebug(_msgx) B26D::Log::dbg(std::string() + _msgx, __FILE__, __LINE__)
+#define LogInfo(_msgx) B26D::Log::inf(std::string() + _msgx, __FILE__, __LINE__)
+#define LogWarn(_msgx) B26D::Log::warn(std::string() + _msgx, __FILE__, __LINE__)
+#define LogError(_msgx) B26D::Log::err(std::string() + _msgx, __FILE__, __LINE__)
+
+#define _LogXOnce(_msgx, _func)     \
+  {                                 \
+    static bool ___logged_ = false; \
+    if (___logged_ == false) {      \
+      ___logged_ = true;            \
+      _func(_msgx);                 \
+    }                               \
+  }
+#define LogErrorOnce(_msgx) _LogXOnce(_msgx, LogError);
+#define LogWarnOnce(_msgx) _LogXOnce(_msgx, LogWarn);
+#define LogDebugOnce(_msgx) _LogXOnce(_msgx, LogDebug);
+
+#define _LogXCycle(_msgx, _func)                   \
+  {                                                \
+    int _ms = 1000;                                \
+    static uint64_t _last = Gu::getMilliSeconds(); \
+    if (Gu::getMilliSeconds() - _last >= _ms) {    \
+      _last = Gu::getMilliSeconds();               \
+      _func(_msgx);                                \
+    }                                              \
+  }
+#define LogWarnCycle(_msgx) _LogXCycle(_msgx, LogWarn)
+#define LogErrorCycle(_msgx) _LogXCycle(_msgx, LogError)
+#define LogDebugCycle(_msgx) _LogXCycle(_msgx, LogDebug)
+
 #define msg(msg) LogInfo(msg)
-#define Assert(__x, ...)                                                                                                                                                               \
-  do {                                                                                                                                                                                 \
-    if (!(__x)) {                                                                                                                                                                      \
+#define Assert(__x, ...)                                                                                                                                                                  \
+  do {                                                                                                                                                                                    \
+    if (!(__x)) {                                                                                                                                                                         \
       std::string str = std::string("Runtime Assertion Failed: ") + std::string(#__x) + (std::string(__VA_ARGS__).length() == 0 ? "" : (std::string(" -> ") + std::string(__VA_ARGS__))); \
-      Log::print(str);                                                                                                                                                                 \
-      B26D::Gu::debugBreak();                                                                                                                                                          \
-      Raise(str);                                                                                                                                                                      \
-    }                                                                                                                                                                                  \
+      Log::print(str);                                                                                                                                                                    \
+      B26D::Gu::debugBreak();                                                                                                                                                             \
+      Raise(str);                                                                                                                                                                         \
+    }                                                                                                                                                                                     \
   } while (0);
 
 #define Raise(__str) throw B26D::Exception(__FILE__, __LINE__, (__str))
@@ -138,23 +188,25 @@ template <typename Tx>
 using uptr = std::unique_ptr<Tx>;
 template <typename Tx>
 using sptr = std::shared_ptr<Tx>;
+template <typename Tx>
+using wptr = std::weak_ptr<Tx>;
 
 #pragma endregion
 #pragma region enums
 
-enum class ImageFormatType { RGBA8,
-                             RGB8,
-                             RGBA16,
-                             RGBA32,
-                             R16,
-                             R32,
-                             DEPTH16,
-                             DEPTH24,
-                             DEPTH32,
-};
+enum class ImageFormatType { RGBA8, RGB8, RGBA16, RGBA32, R16, R32, DEPTH16, DEPTH24, DEPTH32 };
+enum class LineBreak { Unix, DOS };
+enum class PrimType { Triangles, Points, Lines };
 
 #pragma endregion
 #pragma region forward decl
+
+template <typename Tx, int Dx>
+class box2x;
+
+class plane;
+class tri3;
+class oobox3;
 
 class Log;
 class Window;
@@ -164,6 +216,14 @@ class BinaryFile;
 
 class Gu;
 class AppConfig;
+
+class Viewport;
+class Overlay;
+class RenderView;
+class Frustum;
+
+class Mesh;
+class Material;
 
 class Image;
 class ImageFormat;
@@ -175,7 +235,8 @@ class VertexArray;
 class Bobj;
 class Camera;
 class Component;
-class Scene;
+class VisibleStuff;
+class World;
 
 struct GpuQuad;
 struct GpuQuadVert;
@@ -216,19 +277,25 @@ std::string operator+(const std::string& str, const mat4& rhs);
 std::string operator+(const std::string& str, const path_t& rhs);
 
 #pragma endregion
+#pragma region Resources
 
-class MathUtils {
-public:
-  BR2_FORCE_INLINE static int32_t getNumberOfDigits(int32_t i) {
-    return i > 0 ? (int)log10f((float)i) + 1 : 1;
-  }
-  BR2_FORCE_INLINE static uint32_t getNumberOfDigits(uint32_t i) {
-    return i > 0 ? (int)log10((double)i) + 1 : 1;
+#define _RS_DEF(_id) static const char* _id() { return #_id; }
+namespace res {
+  namespace material {
+    _RS_DEF(DebugDrawMaterial_Points)
+    _RS_DEF(DebugDrawMaterial_Lines)
+    _RS_DEF(DebugDrawMaterial_Tris)
   }
 };
 
-enum class LineBreak { Unix,
-                       DOS };
+#pragma endregion
+
+class MathUtils {
+public:
+  BR2_FORCE_INLINE static int32_t getNumberOfDigits(int32_t i) { return i > 0 ? (int)log10f((float)i) + 1 : 1; }
+  BR2_FORCE_INLINE static uint32_t getNumberOfDigits(uint32_t i) { return i > 0 ? (int)log10((double)i) + 1 : 1; }
+};
+
 class OperatingSystem {
 public:
   static inline string_t newline() {
@@ -241,6 +308,37 @@ public:
     OS_METHOD_NOT_IMPLEMENTED
 #endif
     return ret;
+  }
+};
+
+template <typename Tx>
+class GrowList {
+private:
+  std::vector<Tx> _items;
+  int _count = 0;
+  int _maxcount;
+
+public:
+  int maxCount() { return _maxcount; }
+  int size() { return _count; }
+  Tx* data() { return _items.data(); }
+
+  GrowList(int max = 9999999) { _maxcount = max; }
+  void reset() { _count = 0; }
+  Tx& operator[](size_t idx) { return _items[idx]; }
+  void push_back(Tx item);
+};
+struct GpuDebugVert {
+  vec3 _v;
+  vec4 _c;
+  vec2 _size;
+  vec3 _outl;
+  GpuDebugVert() {}
+  GpuDebugVert(const vec3& v, const vec4& c, const vec2& siz, const vec3& outl) {
+    _v = v;
+    _c = c;
+    _size = siz;
+    _outl = outl;
   }
 };
 

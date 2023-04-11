@@ -120,6 +120,7 @@
     "testapp": "cpp",
     "*.ipp": "cpp",
     "regex": "cpp",
-    "shared_mutex": "cpp"
+    "shared_mutex": "cpp",
+    "unordered_set": "cpp"
   },
 }

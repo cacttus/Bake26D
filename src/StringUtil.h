@@ -7,7 +7,7 @@
 #ifndef __STRING_286311063321698159639017_H__
 #define __STRING_286311063321698159639017_H__
 
-#include "./testapp_defines.h"
+#include "./GlobalDefines.h"
 //#include "../math/MathHeader.h"
 
 namespace B26D {

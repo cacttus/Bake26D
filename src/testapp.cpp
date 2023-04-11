@@ -8,11 +8,16 @@
 #include "stb_image.h"
 #include "./BinaryFile.h"
 #include "./StringUtil.h"
+#include "./Overlay.h"
 
 namespace std {
 
-std::string to_string(const char* __val) { return std::string(__val); }
-std::string to_string(const GLubyte* __val) { return std::string((const char*)__val); }
+std::string to_string(const char* __val) {
+  return std::string(__val);
+}
+std::string to_string(const GLubyte* __val) {
+  return std::string((const char*)__val);
+}
 
 }  // namespace std
 
@@ -32,26 +37,45 @@ std::string Log::CC_NORMAL = "39";
 std::map<GLFWwindow*, uptr<Window>> Gu::_windows;
 path_t Gu::_appPath = "";
 path_t Gu::_assetsPath = "";
+Window* Gu::_master_context = nullptr;
 Window* Gu::_context = nullptr;
 uptr<AppConfig> Gu::_appConfig;
-uint64_t Bobj::s_idgen = 1;
+uptr<World> Gu::_world;
+uint64_t Gu::s_idgen = 1;
 uptr<Shader::ShaderMeta> Shader::_meta;
 std::map<ImageFormatType, uptr<ImageFormat>> Gu::_imageFormats;
+std::unordered_map<std::string, sptr<Material>> Gu::_materials;
 
 #pragma endregion
 #pragma region Log
 
-void Log::err(std::string s, const char* file, int line) { _output(CC_RED, false, "E", file, line, s); }
-void Log::warn(std::string s, const char* file, int line) { _output(CC_YELLOW, false, "W", file, line, s); }
-void Log::dbg(std::string s, const char* file, int line) { _output(CC_CYAN, false, "D", file, line, s); }
-void Log::inf(std::string s, const char* file, int line) { _output(CC_WHITE, false, "I", file, line, s); }
+void Log::err(std::string s, const char* file, int line) {
+  _output(CC_RED, false, "E", file, line, s);
+}
+void Log::warn(std::string s, const char* file, int line) {
+  _output(CC_YELLOW, false, "W", file, line, s);
+}
+void Log::dbg(std::string s, const char* file, int line) {
+  _output(CC_CYAN, false, "D", file, line, s);
+}
+void Log::inf(std::string s, const char* file, int line) {
+  _output(CC_WHITE, false, "I", file, line, s);
+}
 void Log::exception(Exception ex) {
   err(ex.what(), ex.file(), ex.line());
 }
-void Log::print(std::string s) { std::cout << s << std::endl; }
-void Log::print(std::string s, std::string color, bool bold) { std::cout << cc_color(CC_WHITE, bold) + s + cc_reset(); }
-std::string Log::cc_reset() { return "\033[0m"; }
-std::string Log::cc_color(std::string color, bool bold) { return std::string() + "\033[" + (bold ? "1;" : "") + color + "m"; }
+void Log::print(std::string s) {
+  std::cout << s << std::endl;
+}
+void Log::print(std::string s, std::string color, bool bold) {
+  std::cout << cc_color(CC_WHITE, bold) + s + cc_reset();
+}
+std::string Log::cc_reset() {
+  return "\033[0m";
+}
+std::string Log::cc_color(std::string color, bool bold) {
+  return std::string() + "\033[" + (bold ? "1;" : "") + color + "m";
+}
 void Log::_output(std::string color, bool bold, std::string type, const char* file, int line, std::string s) {
   s = _header(color, bold, type, file, line) + s + cc_reset();
   print(s);
@@ -93,15 +117,17 @@ int Gu::run(int argc, char** argv) {
       Raise("Failed to init glfw");
     }
 
+    // windows
     auto win = Gu::createWindow(800, 600, "2.6D Test");
-    glfwMakeContextCurrent(win->glfwWindow());
-    _context = win;
+    // glfwMakeContextCurrent(win->glfwWindow());
+    //_context = win;
+    _master_context = win;
 
-    auto scene = std::make_shared<Scene>();
-    win->scene() = scene;
+    // world
+    _world = std::make_unique<World>();
+
     // auto win2 = Gu::createWindow(800, 600, "2.6D Test");
     // win2->scene() = scene;
-
     // nput controler update () requires a context.. but is in a scene ..
 
     double lasttime, curtime;
@@ -112,16 +138,31 @@ int Gu::run(int argc, char** argv) {
       auto delta = (float)(curtime - lasttime);
       lasttime = curtime;
 
-      Assert(scene);
-      scene->update(delta);
-
       std::vector<GLFWwindow*> destroy;
       for (auto ite = _windows.begin(); ite != _windows.end(); ite++) {
         auto win = ite->second.get();
         glfwMakeContextCurrent(win->glfwWindow());
         _context = win;
 
-        win->update();
+        win->updateState();
+
+        if (win->visible() && !win->minimized()) {
+          win->updateInput();
+        }
+
+        if (_master_context == win) {
+          _world->update(delta);
+        }
+        win->cullViews();
+
+        win->updateSelectedView();
+
+        if (win->visible() && !win->minimized()) {
+          win->renderViews();
+        }
+
+        win->swap();
+
         if (win->state() == Window::WindowState::Quit) {
           destroy.push_back(win->glfwWindow());
         }
@@ -157,7 +198,9 @@ Window* Gu::createWindow(int w, int h, std::string title) {
   if (_windows.begin() != _windows.end()) {
     sharedctx = _windows.begin()->second->glfwWindow();
   }
-  auto win = std::make_unique<Window>(w, h, title, sharedctx);
+  auto win = std::make_unique<Window>();
+  _context = win.get();
+  win->init(w, h, title, sharedctx);
   auto ret = win.get();
   auto glfwwin = win->glfwWindow();
   _windows.insert(std::make_pair(glfwwin, std::move(win)));
@@ -324,6 +367,36 @@ int Gu::printDebugMessages(string_t& ret) {
   }
   return level;
 }
+bool Gu::whileTrueGuard(int& x, int max) {
+  if (x >= max) {
+    RaiseDebug("while(true) guard failed. max=" + max);
+    return false;
+  }
+  x++;
+  return true;
+}
+float Gu::ubtof(uint8_t c) {
+  return glm::clamp((float)c / 255.0f, 0.0f, 1.0f);
+}
+vec4 Gu::rgba_ub(uint8_t r, uint8_t g, uint8_t b, uint8_t a) {
+  return vec4(Gu::ubtof(r), Gu::ubtof(g), Gu::ubtof(b), Gu::ubtof(a));
+}
+vec4 Gu::rgb_ub(uint hex) {
+  auto r = (uint8_t)(hex >> 16 & 0xFF);
+  auto g = (uint8_t)(hex >> 8 & 0xFF);
+  auto b = (uint8_t)(hex >> 0 & 0xFF);
+  return rgb_ub(r, g, b);
+}
+vec4 Gu::rgb_ub(uint8_t r, uint8_t g, uint8_t b) {
+  return vec4(Gu::ubtof(r), Gu::ubtof(g), Gu::ubtof(b), 1);
+}
+sptr<Material> Gu::findMaterial(const string_t& name) {
+  auto it = _materials.find(name);
+  if (it == _materials.end()) {
+    return nullptr;
+  }
+  return it->second;
+}
 
 #pragma endregion
 #pragma region Image
@@ -378,15 +451,15 @@ uptr<Image> Image::scale(Image* img, float s, ImageFormat* changefmt) {
 
   auto fmt = changefmt != nullptr ? changefmt : img->format();
   auto dst = std::make_unique<Image>(floor((float)img->width() * s), floor((float)img->height() * s), fmt);
-  auto srcbox = box2i(0, 0, img->width(), img->height());
-  auto dstbox = box2i(0, 0, dst->width(), dst->height());
+  auto srcbox = box2i(ivec2(0, 0), ivec2(img->width(), img->height()));
+  auto dstbox = box2i(ivec2(0, 0), ivec2(dst->width(), dst->height()));
   Image::copy(dst.get(), dstbox, img, srcbox);
   return dst;
 }
 uptr<Image> Image::crop(Image* img, const box2i& region) {
   Assert(img != nullptr);
   auto dst = std::make_unique<Image>(region.width(), region.height(), img->format());
-  auto dstbox = box2i(0, 0, region.width(), region.height());
+  auto dstbox = box2i(ivec2(0, 0), ivec2(region.width(), region.height()));
   Image::copy(dst.get(), dstbox, img, region);
   return dst;
 }
@@ -408,8 +481,8 @@ void Image::copy(Image* dst, const box2i& dstbox, Image* src, const box2i& srcbo
   Assert(srcbox.width() > 0);
   Assert(srcbox.height() > 0);
 
-  auto dstbounds = box2i(0, 0, dst->width(), dst->height());
-  auto srcbounds = box2i(0, 0, src->width(), src->height());
+  auto dstbounds = box2i(ivec2(0, 0), ivec2(dst->width(), dst->height()));
+  auto srcbounds = box2i(ivec2(0, 0), ivec2(src->width(), src->height()));
   auto c_dst = dstbox.clip(dstbounds);
   auto c_src = srcbox.clip(srcbounds);
 
@@ -515,6 +588,7 @@ void* Image::pixel(int32_t x, int32_t y) {
   void* pt = (void*)(dg + off);  // unsafe cast
   return pt;
 }
+
 #pragma endregion
 #pragma region Shader
 
@@ -942,6 +1016,60 @@ void VertexArray::setAttrib(int attr_idx, int attr_compsize, GLenum attr_datatyp
 }
 
 #pragma endregion
+#pragma region Mesh
+
+Mesh::Mesh() {}
+Mesh::Mesh(const string_t& name, PrimType pt, sptr<GpuBuffer> vertexBuffer, sptr<GpuBuffer> indexBuffer, sptr<GpuBuffer>* faceData, bool computeBoundBox) {
+  _name = name;
+  _primtype = pt;
+  _vbos.push_back(vertexBuffer);
+  _ibo = indexBuffer;
+  // FaceData = faceData;
+
+  //  Gu::context()->vaos();
+
+  if (computeBoundBox) {
+    // ComputeBoundBox();
+  }
+}
+
+Mesh::~Mesh() {}
+void Mesh::createNew() {
+  //         CheckErrorsDbg();
+  //       auto vao = std::make_unique<VertexArray>();
+  //       var vao = new VertexArrayObject(this.Name + "-VAO");
+  //       vao.Bind();
+  //
+  //       GpuDataFormat fmtLast = null;
+  //
+  //       foreach (var vb in _vertexBuffers)
+  //       {
+  //         vb.Bind();
+  //         Gu.Assert(vb.Format != null);
+  //         vb.Format.BindVertexAttribs(fmtLast);
+  //         fmtLast = vb.Format;
+  //       }
+  //       if (_indexBuffer != null)
+  //       {
+  //         _indexBuffer.Bind();
+  //         //_indexBuffer.Format.BindAttribs(null);
+  //       }
+  //
+  //         CheckErrorsDbg();
+  //       vao.Unbind();
+  //
+  //       GPUBuffer.UnbindBuffer(BufferTarget.ArrayBuffer);
+  //       GPUBuffer.UnbindBuffer(BufferTarget.ElementArrayBuffer);
+  //
+  //       return vao;
+}
+#pragma endregion
+#pragma region Mesh
+
+Material::Material() {}
+Material::~Material() {}
+
+#pragma endregion
 #pragma region GpuBuffer
 
 GpuBuffer::GpuBuffer(size_t size, void* data, uint32_t flags) {
@@ -974,8 +1102,8 @@ TextureBase::TextureBase(int w, int h, ImageFormat* fmt, bool mipmaps, GLenum ty
   glTextureParameteri(_glId, GL_TEXTURE_BASE_LEVEL, 0);
   glTextureParameteri(_glId, GL_TEXTURE_MAX_LEVEL, _levels - 1);
   if (_levels > 1) {
-    glTextureParameterf(_glId, GL_TEXTURE_MIN_FILTER, GL_LINEAR_MIPMAP_LINEAR);
-    glTextureParameterf(_glId, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+    glTextureParameterf(_glId, GL_TEXTURE_MIN_FILTER, GL_NEAREST_MIPMAP_NEAREST);  // GL_LINEAR_MIPMAP_LINEAR);
+    glTextureParameterf(_glId, GL_TEXTURE_MAG_FILTER, GL_NEAREST);                 // GL_LINEAR);
   }
   else {
     glTextureParameterf(_glId, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
@@ -987,8 +1115,6 @@ TextureBase::~TextureBase() {
   glDeleteTextures(1, &_glId);
 }
 void TextureBase::setStorageMode() {
- // glActiveTexture(GL_TEXTURE0);  // Needed?
- // glBindTexture(_type, _glId);
   if (_format->bpp() % 8 == 0) {
     glPixelStorei(GL_UNPACK_ALIGNMENT, 8);
   }
@@ -1001,7 +1127,6 @@ void TextureBase::setStorageMode() {
   else {
     glPixelStorei(GL_UNPACK_ALIGNMENT, 1);
   }
-//  glBindTexture(_type, 0);
 }
 void TextureBase::bind(int32_t channel) {
   glBindTextureUnit(channel, _glId);
@@ -1024,15 +1149,13 @@ int TextureBase::calcMipLevels(int w, int h, int minwh) {
 #pragma endregion
 #pragma region Texture
 
-Texture::Texture(int w, int h, ImageFormat* fmt, bool mipmaps) : TextureBase(w, h, fmt, mipmaps, GL_TEXTURE_2D) {
-}
+Texture::Texture(int w, int h, ImageFormat* fmt, bool mipmaps) : TextureBase(w, h, fmt, mipmaps, GL_TEXTURE_2D) {}
 Texture::Texture(Image* img, bool mipmaps) : Texture(img->width(), img->height(), img->format(), mipmaps) {
   Assert(img);
   copyToGpu(img->width(), img->height(), img->data());
   CheckErrorsDbg();
 }
-Texture::~Texture() {
-}
+Texture::~Texture() {}
 uptr<Texture> Texture::singlePixel(vec4 color) {
   uptr<Texture> ret = std::make_unique<Texture>(1, 1, Gu::imageFormat(ImageFormatType::RGBA8), false);
 
@@ -1099,10 +1222,7 @@ void TextureArray::copyToGpu(int index, const void* data) {
 void TextureArray::copyToGpu(int x, int y, int w, int h, int index, const void* data) {
   Assert(index < _count);
   setStorageMode();
-  glTextureSubImage3D(_glId, 0,
-                      x, y, index,
-                      w, h, 1,
-                      _format->glFormat(), _format->glDatatype(), data);
+  glTextureSubImage3D(_glId, 0, x, y, index, w, h, 1, _format->glFormat(), _format->glDatatype(), data);
   CheckErrorsDbg();
 }
 void TextureArray::conform(std::vector<uptr<Image>>& imgs) {
@@ -1114,11 +1234,11 @@ void TextureArray::conform(std::vector<uptr<Image>>& imgs) {
       auto ss = glm::min(sw, sh);
       if (ss < 1.0f) {
         auto up = Image::scale(imgs[i].get(), ss, imgs[0]->format());
-        auto up2 = Image::crop(up.get(), box2i(0, 0, imgs[0]->width(), imgs[0]->height()));
+        auto up2 = Image::crop(up.get(), box2i(ivec2(0, 0), ivec2(imgs[0]->width(), imgs[0]->height())));
         imgs[i].swap(up2);
       }
       else if (ss != 1.0f) {
-        auto up2 = Image::crop(imgs[i].get(), box2i(0, 0, imgs[0]->width(), imgs[0]->height()));
+        auto up2 = Image::crop(imgs[i].get(), box2i(ivec2(0, 0), ivec2(imgs[0]->width(), imgs[0]->height())));
         imgs[i].swap(up2);
       }
     }
@@ -1138,7 +1258,11 @@ Framebuffer ::~Framebuffer() {
 #pragma endregion
 #pragma region Input
 
-Input::Input() {}
+Input::Input(Window* w) {
+  _window = w;
+  updateCursor();
+  _mouseLast = _mouse;
+}
 Input::~Input() {}
 void Input::addKeyEvent(int32_t key, bool press) {
   KeyEvent k;
@@ -1161,7 +1285,15 @@ bool Input::pressOrDown(int key) {
   }
   return false;
 }
+void Input::updateCursor() {
+  _mouseLast = _mouse;
+  double mx = 0, my = 0;
+  glfwGetCursorPos(_window->glfwWindow(), &mx, &my);
+  _mouse = vec2((float)mx, (float)my);
+}
 void Input::update() {
+  updateCursor();
+
   if (_key_events.size()) {
     for (auto& ke : _key_events) {
       auto it = _keys.find(ke._key);
@@ -1246,8 +1378,7 @@ DrawQuads::DrawQuads(uint32_t maxQuads) {
 
   CheckErrorsDbg();
 }
-DrawQuads::~DrawQuads() {
-}
+DrawQuads::~DrawQuads() {}
 GpuQuad* DrawQuads::getQuad() {
   if (_index < _quads.size()) {
     return &_quads[_index++];
@@ -1324,10 +1455,246 @@ void DrawQuads::testMakeQuads() {
     }
   }
 }
+
+#pragma endregion
+#pragma region Viewport
+#pragma endregion
+#pragma region RenderView
+
+RenderView::RenderView(string_t name, vec2 uv0, vec2 uv1, int sw, int sh) {
+  _name = name;
+  _overlay = std::make_unique<Overlay>(this);
+  _viewport = std::make_unique<Viewport>();
+  setSize(uv0, uv1, sw, sh);
+}
+void RenderView::setSize(vec2 uv0, vec2 uv1, int sw, int sh) {
+  _uv0 = uv0;
+  _uv1 = uv1;
+  Assert(_uv0.x < _uv1.x);
+  Assert(_uv0.y < _uv1.y);
+  onResize(sw, sh);
+}
+void RenderView::onResize(int sw, int sh) {
+  updateDimensions(sw, sh);
+  // Gui?.OnResize();//Gui is translated to the current FBO size in the shader.
+}
+void RenderView::updateDimensions(int cur_output_fbo_w, int cur_output_fbo_h) {
+  //** CALLED EVERY PIPE STAGE **
+  auto b = computeScaledView(_uv0, _uv1, cur_output_fbo_w, cur_output_fbo_h);
+
+  if (b.width() <= 0 || b.height() <= 0) {
+    LogInfo("Resize View " + _name + ": " + b.x() + "," + b.y() + " " + b.width() + "," + b.height());
+    LogError("Resize View " + _name + " w/h was zero, setting to 1");
+    Gu::debugBreak();
+    if (b.width() <= 0) {
+      b.width(1);
+    }
+    if (b.height() <= 0) {
+      b.height(1);
+    }
+  }
+
+  _viewport->x(b.x());
+  _viewport->y(b.y());
+  _viewport->width(b.width());
+  _viewport->height(b.height());
+
+  syncCamera();
+}
+box2i RenderView::computeScaledView(vec2 uv0, vec2 uv1, int width, int height) {
+  // render views are defined as taking up a uv % of the window, this computes the w/h from the uv %
+  box2i b = box2i();
+  b.x((int)(glm::round(uv0.x * (float)width)));
+  b.y((int)(glm::round(uv0.y * (float)height)));
+  b.width((int)(glm::round((uv1.x - uv0.x) * (float)width)));
+  b.height((int)(glm::round((uv1.y - uv0.y) * (float)height)));
+  return b;
+}
+void RenderView::syncCamera() {
+  // cam must always be in sync
+  if (_camera != nullptr && _enabled) {
+    _camera->computeView(this);
+  }
+}
+
+#pragma endregion
+void Gpu::setState(const GpuRenderState& state, bool force) {
+  if (state.cullFaceEnabled != _last.cullFaceEnabled || force) {
+    if (state.cullFaceEnabled) {
+      glEnable(GL_CULL_FACE);
+    }
+    else {
+      glDisable(GL_CULL_FACE);
+    }
+  }
+  if (state.depthTestEnabled != _last.depthTestEnabled || force) {
+    if (state.depthTestEnabled) {
+      glEnable(GL_DEPTH_TEST);
+    }
+    else {
+      glDisable(GL_DEPTH_TEST);
+    }
+  }
+  if (state.scissorTestEnabled != _last.scissorTestEnabled || force) {
+    if (state.scissorTestEnabled) {
+      glEnable(GL_SCISSOR_TEST);
+    }
+    else {
+      glDisable(GL_SCISSOR_TEST);
+    }
+  }
+
+  if (state.cullFaceEnabled) {
+    if (state.cullFaceMode != _last.cullFaceMode || force) {
+      glFrontFace(state.cullFaceMode);
+    }
+    if (state.frontFaceDirection != _last.frontFaceDirection || force) {
+      glFrontFace(state.frontFaceDirection);
+    }
+  }
+
+  if (state.depthTestEnabled) {
+    if (state.depthMask != _last.depthMask || force) {
+      glDepthMask(state.depthMask);
+    }
+  }
+
+  if (state.blendEnabled != _last.blendEnabled || state.blendFactor != _last.blendFactor || state.blendFunc != _last.blendFunc || force) {
+    Assert(Gu::context() != nullptr);
+    // if (Gu.Context.Renderer != null && Gu.Context.Renderer.CurrentStage != null && Gu.Context.Renderer.CurrentStage.OutputFramebuffer != null) {
+    if (state.blendEnabled) {
+      glEnable(GL_BLEND);
+      // Blending is now controlled per-framebuffer attachment
+      // Gu::context()->renderer()->.CurrentStage.OutputFramebuffer.SetBlendParams();
+    }
+    else {
+      glDisable(GL_BLEND);
+    }
+  }
+
+  _last = state;
+}
+#pragma region Frustum
+Frustum::Frustum() {}
+Frustum::~Frustum() {}
+void Frustum::update(Camera* cam) {
+  // width n/f will remain the same regardless of projection, using FOV and near plane to get the orthographic width.
+  float tanfov2 = tanf(cam->fov() / 2.0f);
+  float ar = (float)cam->viewport()->width() / (float)cam->viewport()->height();
+  _widthNear = tanfov2 * cam->near() * 2.0f;
+  _heightNear = _widthNear / ar;
+
+  // if (cam->ProjectionMode == ProjectionMode.Orthographic)
+  // {
+  //   _widthFar = _widthNear;
+  //   _heightFar = _heightNear;
+  // }
+  // else if (cam->ProjectionMode == ProjectionMode.Perspective)
+  // {
+  _widthFar = tanfov2 * cam->far() * 2.0f;
+  _heightFar = _widthFar / ar;
+  // }
+  // else
+  // {
+  //   Gu.BRThrowNotImplementedException();
+  // }
+
+  _nearCenter = cam->world_pos() + cam->forward() * cam->near();
+  _farCenter = cam->world_pos() + cam->forward() * cam->far();
+  _nearTopLeft = _nearCenter - cam->right() * _widthNear * 0.5f + cam->up() * _heightNear * 0.5f;
+  _farTopLeft = _farCenter - cam->right() * _widthFar * 0.5f + cam->up() * _heightFar * 0.5f;
+
+  constructPointsAndPlanes(_farCenter, _nearCenter, cam->up(), cam->right(), _widthNear * 0.5f, _widthFar * 0.5f, _heightNear * 0.5f, _heightFar * 0.5f);
+}
+void Frustum::constructPointsAndPlanes(vec3 farCenter, vec3 nearCenter, vec3 upVec, vec3 rightVec, float w_near_2, float w_far_2, float h_near_2, float h_far_2) {
+  _points[fpt_nbl] = (nearCenter - (upVec * h_near_2) - (rightVec * w_near_2));
+  _points[fpt_fbl] = (farCenter - (upVec * h_far_2) - (rightVec * w_far_2));
+
+  _points[fpt_nbr] = (nearCenter - (upVec * h_near_2) + (rightVec * w_near_2));
+  _points[fpt_fbr] = (farCenter - (upVec * h_far_2) + (rightVec * w_far_2));
+
+  _points[fpt_ntl] = (nearCenter + (upVec * h_near_2) - (rightVec * w_near_2));
+  _points[fpt_ftl] = (farCenter + (upVec * h_far_2) - (rightVec * w_far_2));
+
+  _points[fpt_ntr] = (nearCenter + (upVec * h_near_2) + (rightVec * w_near_2));
+  _points[fpt_ftr] = (farCenter + (upVec * h_far_2) + (rightVec * w_far_2));
+
+  // - Construct AA bound box
+  _boundBox.genReset();
+  //_boundBox._min = -vec3(FLT_MAX,FLT_MAX,FLT_MAX);
+  //_boundBox._max = vec3(FLT_MAX,FLT_MAX,FLT_MAX);
+
+  for (int i = 0; i < 8; ++i) {
+    _boundBox.genExpandByPoint(_points[i]);
+    //_boundBox._min = glm::min(_boundBox._min, _points[i]);
+    //_boundBox._max = glm::min(_boundBox._max, _points[i]);
+  }
+  // TODO: Optimize:
+  //         1) we don't use the fourth value of the QuadPlane4 at all
+  //         2) QuadPLane4 calculates a TBN basis.  We don't need that.
+  //   1   2
+  //
+  //   3   4
+  //
+  //  - Construct so that the normals are facing into the frustum  - Checked all is good
+  _planes[fp_near] = plane(_points[fpt_ntl], _points[fpt_ntr], _points[fpt_nbl]);
+  _planes[fp_far] = plane(_points[fpt_ftr], _points[fpt_ftl], _points[fpt_fbr]);
+
+  _planes[fp_left] = plane(_points[fpt_ftl], _points[fpt_ntl], _points[fpt_fbl]);
+  _planes[fp_right] = plane(_points[fpt_ntr], _points[fpt_ftr], _points[fpt_nbr]);
+
+  _planes[fp_top] = plane(_points[fpt_ntr], _points[fpt_ntl], _points[fpt_ftr]);
+  _planes[fp_bottom] = plane(_points[fpt_fbr], _points[fpt_fbl], _points[fpt_nbr]);
+}
+bool Frustum::hasBox(const box3& pCube) {
+  vec3 min, max;
+  float d1, d2;
+  pCube.validate();
+  // if (!pCube-(false, false))
+  // {
+  //   Gu.LogErrorCycle("Box was invalid");
+  //   Gu.DebugBreak();
+  //   return false;
+  // }
+
+  for (int i = 0; i < 6; ++i) {
+    min = pCube._min;
+    max = pCube._max;
+
+    //  - Calculate the negative and positive vertex
+    if (_planes[i].n.x < 0) {
+      min.x = pCube._max.x;
+      max.x = pCube._min.x;
+    }
+
+    if (_planes[i].n.y < 0) {
+      min.y = pCube._max.y;
+      max.y = pCube._min.y;
+    }
+
+    if (_planes[i].n.z < 0) {
+      min.z = pCube._max.z;
+      max.z = pCube._min.z;
+    }
+
+    d1 = _planes[i].dist(max);
+    d2 = _planes[i].dist(min);
+
+    if (d1 < 0.0f && d2 < 0.0f) {
+      return false;
+    }
+    // if(d2< 0.0f)
+    // ret = true; // Currently we intersect the frustum.  Keep checking the rest of the planes to see if we're outside.
+  }
+  return true;
+}
+
 #pragma endregion
 #pragma region Camera
 
 Camera::Camera(string_t&& name) : Bobj(std::move(name)), _gpudata(std::make_unique<GpuCamera>()), _buffer(std::make_unique<GpuBuffer>(sizeof(GpuCamera))) {
+  _computedViewport = std::make_unique<Viewport>();
+  _frustum = std::make_unique<Frustum>();
 }
 void Camera::updateViewport(int width, int height) {
   _fov = glm::clamp(_fov, 0.1f, 179.9f);
@@ -1337,27 +1704,37 @@ void Camera::updateViewport(int width, int height) {
 
 void Camera::update(float dt, mat4* parent) {
   Bobj::update(dt, parent);
+  _frustum->update(this);
   _gpudata->_view = _world;
 }
-mat4& Camera::proj() { return _gpudata->_proj; }
-mat4& Camera::view() { return _gpudata->_view; }
-GpuBuffer* Camera::uniformBuffer() { return _buffer.get(); }
-
+mat4& Camera::proj() {
+  return _gpudata->_proj;
+}
+mat4& Camera::view() {
+  return _gpudata->_view;
+}
+GpuBuffer* Camera::uniformBuffer() {
+  return _buffer.get();
+}
+void Camera::computeView(RenderView* rv) {
+  // todo: scale camera to dimensions of view with 'bars'
+  _computedViewport->x(rv->viewport()->x());
+  _computedViewport->y(rv->viewport()->y());
+  _computedViewport->width(rv->viewport()->width());
+  _computedViewport->height(rv->viewport()->height());
+}
 #pragma endregion
 #pragma region Bobj
 
-Bobj::Bobj(string_t&& name) {
-  _id = s_idgen++;
+Bobj::Bobj(string_t&& name, const b2_objdata* data) {
+  _id = Gu::genId();
   _name = name;
+  _data = data;
+}
+Bobj::~Bobj() {
+  // msg("destroying " + _name);
 }
 void Bobj::update(float dt, mat4* parent) {
-  for (auto& comp : _components) {
-    comp->update(this, dt);
-  }
-  for (auto& child : _children) {
-    child->update(dt);
-  }
-
   // compile mat
   _world = parent ? *parent : mat4(1);
   _world = glm::scale(_world, _scl);
@@ -1365,21 +1742,85 @@ void Bobj::update(float dt, mat4* parent) {
   _world = glm::translate(_world, _pos);
 
   // basis
-  // msg("world=\n"+_world+"\n");
   _right = glm::normalize(vec3(vec4(1, 0, 0, 1) * _world));
   _up = glm::normalize(vec3(vec4(0, 1, 0, 1) * _world));
   _forward = glm::normalize(vec3(vec4(0, 0, 1, 1) * _world));
+
+  for (auto& comp : _components) {
+    comp->update(this, dt);
+  }
+
+  for (auto& child : _children) {
+    if (child->visible()) {
+      child->update(dt, &_world);
+    }
+  }
+}
+void Bobj::calcBoundBox(box3* parent) {
+  if (_mesh != nullptr) {
+    _boundBoxMeshAA.genReset();
+    _boundBoxMeshOO = oobox3(_mesh->boundbox()._min, _mesh->boundbox()._max);
+    for (int vi = 0; vi < oobox3::c_vcount; ++vi) {
+      _boundBoxMeshOO.verts[vi] = vec3(_world * vec4(_boundBoxMeshOO.verts[vi], 1));
+      _boundBoxMeshAA.genExpandByPoint(_boundBoxMeshOO.verts[vi]);
+      _boundBox.genExpandByPoint(_boundBoxMeshOO.verts[vi]);
+    }
+
+    volumizeBoundBox(_boundBoxMeshAA);
+
+    if (!_boundBoxMeshAA.validate(false, false)) {
+      LogErrorCycle(_name + " BoundBox was invalid.");
+      Gu::debugBreak();
+    }
+  }
+  else {
+    //_boundBoxMeshAA = box3::zero();
+    //_boundBoxMeshOO = box3::zero();
+    _boundBox.genExpandByPoint(world_pos());
+  }
+
+  // SubclassModifyBoundBox();
+
+  // bound box can be just a point - but not invalid.
+  volumizeBoundBox(_boundBox);
+  if (!_boundBox.validate(false, false)) {
+    LogErrorCycle(_name + "  BoundBox was invalid.");
+    Gu::debugBreak();
+  }
+
+  parent->genExpandByPoint(_boundBox._min);
+  parent->genExpandByPoint(_boundBox._max);
+}
+void Bobj::volumizeBoundBox(box3& b) {
+  float epsilon = 0.01f;  // float.Epsilon
+  if (b._max.y - b._min.y == 0) {
+    b._max.y += epsilon;
+    b._min.y -= epsilon;
+  }
+  if (b._max.x - b._min.x == 0) {
+    b._max.x += epsilon;
+    b._min.x -= epsilon;
+  }
+  if (b._max.z - b._min.z == 0) {
+    b._max.z += epsilon;
+    b._min.z -= epsilon;
+  }
+}
+void Bobj::addChild(sptr<Bobj> ob) {
+  Assert(ob->parent().expired());
+  ob->parent() = getThis<Bobj>();
+  _children.push_back(ob);
 }
 void Bobj::lookAt(const vec3&& at) {
   mat4 m;
   auto e = 0.0000001;
   auto vat = at - _pos;
   if (glm::dot(vat, vat) < e * e) {
-    LogWarn("|at-pos| = 0");
+    LogWarn("lookAt |at-pos| = 0");
     return;
   }
   if (glm::dot(_forward, _forward) < e * e) {
-    LogWarn("|_forward| = 0");
+    LogWarn("lookAt |_forward| = 0");
     return;
   }
   vat = glm::normalize(vat);
@@ -1392,35 +1833,56 @@ void Bobj::lookAt(const vec3&& at) {
 }
 
 #pragma endregion
-#pragma region modifiers
+#pragma region InputController
 
-InputController::InputController() {
-}
+InputController::InputController() {}
 void InputController::update(Bobj* obj, float delta) {
   Assert(obj);
   Component::update(obj, delta);
 
-  auto ct = Gu::currentContext();
+  auto ct = Gu::context();
   if (ct == nullptr) {
     LogError("Input: Context was null.");
     return;
   }
-
-  // move character control input
-  float ang = (float)(M_PI * 2.0) * obj->rspeed() * delta;
   auto inp = ct->input();
-  auto spdmul = inp->pressOrDown(GLFW_KEY_LEFT_SHIFT) || inp->pressOrDown(GLFW_KEY_RIGHT_SHIFT) ? 5.0f : 1.0f;
+
+  // aim
+  float cursor_sensitivity = 0.01f;
+  if (inp->pressOrDown(GLFW_MOUSE_BUTTON_LEFT)) {
+    auto dm = ct->input()->mouse() - ct->input()->mouseLast();
+    float rotx_ang = glm::pi<float>() / (128.0f * 3.0f);
+    float roty_ang = glm::pi<float>() / (128.0f * 3.0f);
+    if (glm::epsilonNotEqual(dm.y, 0.0f, cursor_sensitivity)) {
+      obj->rot() = glm::rotate(obj->rot(), roty_ang * dm.y, obj->right());
+    }
+    if (glm::epsilonNotEqual(dm.x, 0.0f, cursor_sensitivity)) {
+      obj->rot() = glm::rotate(obj->rot(), -rotx_ang * dm.x, vec3(0, 1, 0));
+      ;
+    }
+  }
+
+  // strafe
+  float ang = (float)(M_PI * 2.0) * obj->rspeed() * delta;
+  float fmul = 1;
+  float smul = 1;
+  if (inp->pressOrDown(GLFW_KEY_LEFT_SHIFT) || inp->pressOrDown(GLFW_KEY_RIGHT_SHIFT)) {
+    fmul = 5.0f;
+    smul = 3.0f;
+  }
   if (inp->pressOrDown(GLFW_KEY_UP) || inp->pressOrDown(GLFW_KEY_W)) {
-    obj->pos() += obj->forward() * obj->speed() * spdmul * delta;
+    obj->pos() += obj->forward() * obj->speed() * fmul * delta;
   }
   if (inp->pressOrDown(GLFW_KEY_DOWN) || inp->pressOrDown(GLFW_KEY_S)) {
-    obj->pos() -= obj->forward() * obj->speed() * spdmul * delta;
+    obj->pos() -= obj->forward() * obj->speed() * fmul * delta;
   }
   if (inp->pressOrDown(GLFW_KEY_LEFT) || inp->pressOrDown(GLFW_KEY_A)) {
-    obj->rot() = glm::rotate(obj->rot(), -ang, obj->up());
+    obj->pos() += obj->right() * obj->sspeed() * smul * delta;
+    // obj->rot() = glm::rotate(obj->rot(), -ang, obj->up());
   }
   if (inp->pressOrDown(GLFW_KEY_RIGHT) || inp->pressOrDown(GLFW_KEY_D)) {
-    obj->rot() = glm::rotate(obj->rot(), ang, obj->up());
+    obj->pos() -= obj->right() * obj->sspeed() * smul * delta;
+    // obj->rot() = glm::rotate(obj->rot(), ang, obj->up());
   }
 
   // other keys
@@ -1435,39 +1897,65 @@ void InputController::update(Bobj* obj, float delta) {
 #pragma endregion
 #pragma region Scene
 
-Scene::Scene() {
+World::World() {
+  Assert(Gu::context() != nullptr);
+
   auto normpath = Gu::relpath("../output/mt_normal_depth.png");
   auto colpath = Gu::relpath("../output/mt_color.png");
   auto metapath = Gu::relpath("../output/b2_meta.bin");
+
   if (!Gu::exists(normpath) || !Gu::exists(colpath) || !Gu::exists(metapath)) {
     Raise(std::string() + "could not find textures: \n" + (normpath.string()) + "\n" + (colpath.string()) + "\n run the blender python script first");
   }
-  loadD26Meta(metapath);
-  auto normimg = Image::from_file(normpath.string());
-  _normal_depth = std::make_unique<Texture>(normimg.get());
-  auto colimg = Image::from_file(colpath.string());
-  colimg = Image::scale(colimg.get(), 0.2136f);
-  _color = std::make_unique<Texture>(colimg.get());
+  std::vector<uptr<Image>> images;
+  images.push_back(std::move(Image::from_file(normpath.string())));
+  images.push_back(std::move(Image::from_file(colpath.string())));
+  _objtexs = std::make_unique<TextureArray>(images, true);
 
+  loadD26Meta(metapath);
+  Assert(_objdatas.size() > 0);
+  // debug
+  for (auto& ob : _objdatas) {
+    msg("ob.name=" + ob._name);
+  }
+  _root = std::make_shared<Bobj>("_root");
+
+  // createOb("testobject", &_objdatas[0]);
+  auto cam = std::make_shared<Camera>("MainCamera");
+  cam->components().push_back(std::make_unique<InputController>());
+  cam->pos() = vec3(0, 2, 10);
+  _activeCamera = cam;
+  _root->addChild(cam);
+
+  auto ret = std::make_shared<Bobj>("testobject", &_objdatas[0]);
+  _root->addChild(ret);
+}
+uptr<TextureArray> TextureArray::test() {
   std::vector<uptr<Image>> images;
   images.push_back(std::move(Image::from_file(Gu::relpath("../data/tex/Церковь Спаса на Крови.jpg").string())));
   images.push_back(std::move(Image::from_file(Gu::relpath("../data/tex/stpeter.jpg").string())));
   images.push_back(std::move(Image::from_file(Gu::relpath("../data/tex/дэвид.jpg").string())));
   images.push_back(std::move(Image::from_file(Gu::relpath("../data/tex/Сикстинская капелла.jpg").string())));
-
   TextureArray::conform(images);
-  _test_array = std::make_unique<TextureArray>(images, true);
-  _activeCamera = std::make_shared<Camera>("MainCamera");
-  _activeCamera->components().push_back(std::make_unique<InputController>());
-  _activeCamera->pos() = vec3(0, 2, 10);
-  _objects.push_back(_activeCamera);
+  return std::make_unique<TextureArray>(images, true);
 }
-void Scene::update(float dt) {
-  for (auto& obj : _objects) {
-    obj->update(dt);
+void World::update(float dt) {
+  Assert(_root != nullptr);
+  _root->update(dt);
+}
+void World::cull(RenderView* rv, Bobj* ob) {
+  if (ob == nullptr) {
+    _visibleStuff->clear();
+    ob = _root.get();
+  }
+
+  if (rv->camera()->frustum()->hasBox(ob->boundBox())) {
+    for (auto ch : ob->children()) {
+      cull(rv, ch.get());
+    }
   }
 }
-void Scene::loadD26Meta(path_t loc) {
+void World::loadD26Meta(path_t loc) {
   msg("Loading metadata " + loc.string());
 
   BinaryFile bf;
@@ -1492,9 +1980,24 @@ void Scene::loadD26Meta(path_t loc) {
 }
 
 #pragma endregion
-#pragma region MainWindow
+#pragma region Renderer
 
-Window::Window(int w, int h, std::string title, GLFWwindow* share) {
+void Renderer::beginRenderToWindow() {
+  // hypothetical use of framebuffers
+  glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
+}
+void Renderer::renderViewToWindow(RenderView* rv) {
+  // auto cam = Gu::world()->activeCamera();
+  // cam->updateViewport(_width, _height);  //_proj shouldbe on the window
+}
+void Renderer::endRenderToWindow() {}
+
+#pragma endregion
+#pragma region Window
+
+Window::Window() {}
+void Window::init(int w, int h, std::string title, GLFWwindow* share) {
+  Assert(Gu::context() == this);
   msg("Window " + std::to_string(w) + "x" + std::to_string(h) + " title=" + title);
   _width = w;
   _height = h;
@@ -1519,8 +2022,21 @@ Window::Window(int w, int h, std::string title, GLFWwindow* share) {
   }
 
   glfwMakeContextCurrent(_window);
-  glfwSwapInterval(0);
 
+  if (Gu::context() == nullptr) {
+    // first ctx
+    msg("GL version: " + std::to_string(glGetString(GL_VERSION)));
+  }
+
+  glfwSwapInterval(0);
+  glfwSetMouseButtonCallback(_window, [](auto* win, auto button, auto action, auto mods) {
+    B26D::Window* mw = Gu::getWindow(win);
+    Assert(mw);
+    Assert(mw->_input);
+    if (action == GLFW_PRESS || action == GLFW_RELEASE) {
+      mw->_input->addKeyEvent(button, action == GLFW_PRESS);
+    }
+  });
   glfwSetKeyCallback(_window, [](auto win, auto key, auto code, auto action, auto mods) {
     B26D::Window* mw = Gu::getWindow(win);
     Assert(mw);
@@ -1529,15 +2045,13 @@ Window::Window(int w, int h, std::string title, GLFWwindow* share) {
       mw->_input->addKeyEvent(key, action == GLFW_PRESS);
     }
   });
-  glfwSetFramebufferSizeCallback(
-      _window, [](auto win, auto w, auto h) {
-        Gu::getWindow(win)->on_resize(w, h);
-        ;
-      });
-  glfwSetWindowCloseCallback(
-      _window, [](auto win) {
-        Gu::getWindow(win)->quit_everything();
-      });
+  glfwSetWindowSizeCallback(_window, [](auto win, auto w, auto h) {
+    // glfwSetFramebufferSizeCallback(_window, [](auto win, auto w, auto h) {
+    Gu::getWindow(win)->on_resize(w, h);
+  });
+  glfwSetWindowCloseCallback(_window, [](auto win) {
+    Gu::getWindow(win)->quit_everything();
+  });
 
   // glew
   glewExperimental = GL_FALSE;
@@ -1547,22 +2061,19 @@ Window::Window(int w, int h, std::string title, GLFWwindow* share) {
   }
   glUseProgram(0);  // test  glew
 
+  // context data
+  _input = std::make_unique<Input>(this);
+  _gpu = std::make_unique<Gpu>();
+  _renderer = std::make_unique<Renderer>();
+  _picker = std::make_unique<Picker>();
+
+  createRenderView(vec2(0, 0), vec2(1, 1));
   initEngine();
 
   _state = WindowState::Running;
 }
 Window::~Window() {
   glfwDestroyWindow(_window);
-}
-void Window::update() {
-  do_input();
-  render();
-
-  glfwSwapBuffers(_window);
-  glfwPollEvents();
-  if (glfwWindowShouldClose(_window)) {
-    _state = WindowState::Quit;
-  }
 }
 void Window::toggleFullscreen() {
   bool fs = false, dec = false;
@@ -1607,21 +2118,7 @@ void Window::toggleFullscreen() {
 void Window::quit_everything() {
   _state = WindowState::Quit;
 }
-void Window::do_input() {
-  Assert(_input);
-  _input->update();
-  if (_input->press(GLFW_KEY_F11)) {
-    toggleFullscreen();
-  }
-  if (_input->press(GLFW_KEY_ESCAPE)) {
-    quit_everything();
-  }
-}
 void Window::initEngine() {
-  _input = std::make_unique<Input>();
-
-  msg("GL version: " + std::to_string(glGetString(GL_VERSION)));
-
   glEnable(GL_DEPTH_TEST);
   glEnable(GL_SCISSOR_TEST);
   glDisable(GL_CULL_FACE);
@@ -1633,18 +2130,16 @@ void Window::initEngine() {
   glClearColor(0.89, 0.91, 0.91, 1.0);
   CheckErrorsDbg();
 
+  auto testpath = Gu::relpath("../data/tex/stpeter.jpg");
+  _testTex = std::make_unique<Texture>(Image::from_file(testpath.string()).get(), true);
+
   _drawQuads = std::make_unique<DrawQuads>();
   _drawQuads->testMakeQuads();
   _drawQuads->copyToGpu();
 
-  // obj drawer
-  //  no inputs here, vertex-less and buffer only
   _objShader = std::make_unique<Shader>(Gu::assetpath("shader/b26obj.vs.glsl"), Gu::assetpath("/shader/b26obj.gs.glsl"), Gu::assetpath("/shader/b26obj.fs.glsl"));
 
-  // Bobj ob("testobj");
-  // ob.pos()= vec3(-3.25f, 1, 0);
-  // ob.scl()= vec3(3, 3, 3);
-
+  // going away
   float d = 4;
   GpuObj ob;
   ob._mat = mat4(1.0);
@@ -1692,27 +2187,92 @@ void Window::initFramebuffer() {
   glViewport(0, 0, _width, _height);
   glScissor(0, 0, _width, _height);
 
+  _renderer = std::make_unique<Renderer>();
+
   CheckErrorsRt();
 }
-void Window::render() {
-  glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
+void Window::updateState() {
+  _visible = glfwGetWindowAttrib(_window, GLFW_VISIBLE);
+  _minimized = glfwGetWindowAttrib(_window, GLFW_ICONIFIED);
+  _focused = glfwGetWindowAttrib(_window, GLFW_FOCUSED);
 
-  _scene->activeCamera()->updateViewport(_width, _height);  //_proj shouldbe on the window
+  glfwPollEvents();
+  if (glfwWindowShouldClose(_window)) {
+    _state = WindowState::Quit;
+  }
+}
+void Window::updateInput() {
+  Assert(_input);
+  _input->update();
+  if (_input->press(GLFW_KEY_F11)) {
+    toggleFullscreen();
+  }
+  if (_input->press(GLFW_KEY_ESCAPE)) {
+    quit_everything();
+  }
+}
+void Window::cullViews() {}
+void Window::createRenderView(vec2 xy, vec2 wh) {
+  auto rv = std::make_unique<RenderView>("default", xy, wh, _width, _height);
+  _views.push_back(std::move(rv));
+}
+void Window::renderViews() {
+  if (false) {
+    //**NEW SYSTM
+    //**NEW SYSTM
+    //**NEW SYSTM
+    //**NEW SYSTM
+    //**NEW SYSTM
+    //**NEW SYSTM
+    //**NEW SYSTM
+    //**NEW SYSTM
+    //**NEW SYSTM
+    //**NEW SYSTM
+    //**NEW SYSTM
+    //**NEW SYSTM
+    //**NEW SYSTM
+    //**NEW SYSTM
+    //**NEW SYSTM
+    //**NEW SYSTM
+    _renderer->beginRenderToWindow();
+    for (auto& rv : _views) {
+      if (rv->enabled()) {
+        _renderer->renderViewToWindow(rv.get());
+      }
+    }
+    _renderer->endRenderToWindow();
+    _picker->updatePickedPixel();
+    // Gu.Context.GameWindow.Context.SwapBuffers();
+    // Gu.Context.Gpu.ExecuteCallbacks_RenderThread();
+  }
+  else {
+    glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
 
-  // draw quads test
-  _drawQuads->draw(_scene->activeCamera().get(), _scene->_color.get());
+    // TODO: views + cameras.
 
-  // objs test
-  _objShader->bind();
-  _objShader->setCameraUfs(_scene->activeCamera().get());
-  _objShader->setTextureUf(_scene->_test_array.get(), 0, "_textures");
-  _objShader->bindSSBBlock("_ufGpuObj_Block", _objBuf.get());
-  _objVao->bind();
-  glDrawArrays(GL_POINTS, 0, _objs.size());
-  _objVao->unbind();
-  _objShader->unbind();
+    auto cam = Gu::world()->activeCamera();
+
+    cam->updateViewport(_width, _height);  //_proj shouldbe on the window
+
+    // draw quads test
+    _drawQuads->draw(cam.get(), _testTex.get());
+
+    // this is going away we're going to 'collect bobjs'
+    //  objs test
+    _objShader->bind();
+    _objShader->setCameraUfs(cam.get());
+    _objShader->setTextureUf(Gu::world()->objtexs(), 0, "_textures");
+    _objShader->bindSSBBlock("_ufGpuObj_Block", _objBuf.get());
+    _objVao->bind();
+    glDrawArrays(GL_POINTS, 0, _objs.size());
+    _objVao->unbind();
+    _objShader->unbind();
+  }
 
   CheckErrorsRt();
+}
+void Window::swap() {
+  glfwSwapBuffers(_window);
 }
 
 #pragma endregion

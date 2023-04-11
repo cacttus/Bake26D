@@ -1,12 +1,4 @@
 
-#include "./StringUtil.h"
-#include "./testapp.h"
-// #include "../base/TypeConv.h"
-//
-// #include "../base/Logger.h"
-// #include "../base/Gu.h"
-// #include "../base/OperatingSystem.h"
-
 // For wstring conversion
 #include <locale>
 #include <codecvt>
@@ -15,6 +7,15 @@
 // For va_list
 #include <stdarg.h>
 #include <sstream>
+
+#include "./testapp.h"
+#include "./StringUtil.h"
+// #include "../base/TypeConv.h"
+//
+// #include "../base/Logger.h"
+// #include "../base/Gu.h"
+// #include "../base/OperatingSystem.h"
+
 
 namespace B26D {
 
