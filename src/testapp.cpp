@@ -1516,7 +1516,32 @@ void RenderView::syncCamera() {
     _camera->computeView(this);
   }
 }
+bool RenderView::beginPipelineStage(PipelineStage* ps) {
+  updateDimensions(ps->width(), ps->height());
+  glViewport(_viewport->x(),
+             ps->height() - _viewport->y() - _viewport->height(),  // OpenGL Y = Bottom left!!!
+             _viewport->width(), _viewport->height());
 
+  // if we have an active camera set the scissor to the camera, else set to the viewport. e.g. make "black bars"
+  auto clip = getClipViewport();
+  glScissor(clip->x(),
+            ps->height() - clip->y() - clip->height(),  // OpenGL Y = Bottom left!!!
+            clip->width(), clip->height());
+
+  // TODO:
+  //  CompileGpuData();
+
+  return true;
+}
+void RenderView::endPipelineStage(PipelineStage* ps) {}
+Viewport* RenderView::getClipViewport() {
+  if (_camera != nullptr) {
+    return _camera->viewport();
+  }
+  else {
+    return _viewport.get();
+  }
+}
 #pragma endregion
 void Gpu::setState(const GpuRenderState& state, bool force) {
   if (state.cullFaceEnabled != _last.cullFaceEnabled || force) {
@@ -1929,6 +1954,8 @@ World::World() {
 
   auto ret = std::make_shared<Bobj>("testobject", &_objdatas[0]);
   _root->addChild(ret);
+
+  _visibleStuff = std::make_unique<VisibleStuff>();
 }
 uptr<TextureArray> TextureArray::test() {
   std::vector<uptr<Image>> images;
@@ -1978,21 +2005,104 @@ void World::loadD26Meta(path_t loc) {
     _objdatas.push_back(ob);
   }
 }
+void World::renderPipeStage(RenderView* rv, PipelineStage* ps) {
+  // if (stage == PipelineStageEnum.Deferred)
+  // {
 
+  // TODO:
+  // find rv on stuff, then draw it
+
+  // _visibleStuff->draw(rv, DrawMode.Deferred, _worldProps);
+
+  // }
+  // else if (stage == PipelineStageEnum.Forward)
+  // {
+  //   _visibleStuff.Draw(rv, DrawMode.Forward, _worldProps);
+  // }
+  // else if (stage == PipelineStageEnum.Debug)
+  // {
+  //   _visibleStuff.Draw(rv, DrawMode.Debug, _worldProps);
+  // }
+}
+
+#pragma endregion
+#pragma region PipelineStage
+bool PipelineStage::beginRender(bool forceclear) {
+  //**TODO: this would bind & clear framebuffer target(s)
+  glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
+
+  return true;
+}
+void PipelineStage::endRender() {}
 #pragma endregion
 #pragma region Renderer
 
 void Renderer::beginRenderToWindow() {
   // hypothetical use of framebuffers
-  glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
+  glViewport(0, 0, Gu::context()->width(), Gu::context()->height());
+  glScissor(0, 0, Gu::context()->width(), Gu::context()->height());
+
+  // clears stages
+  for (auto& ps : _pipelineStages) {
+    ps->beginRender(true);
+    ps->endRender();
+  }
 }
 void Renderer::renderViewToWindow(RenderView* rv) {
-  // auto cam = Gu::world()->activeCamera();
-  // cam->updateViewport(_width, _height);  //_proj shouldbe on the window
+  if (beginRenderToView(rv)) {
+    for (auto& ps : _pipelineStages) {
+      // Gu.Prof($"Begin {ps.PipelineStageEnum.ToString()}");
+
+      // if (!IsActiveStage(rv, ps))
+      // {
+      //   continue;
+      // }
+
+      _currentStage = ps.get();
+
+      if (rv->beginPipelineStage(ps.get())) {
+        if (ps->beginRender(false)) {
+          Gu::world()->renderPipeStage(rv, ps.get());
+
+          // If we are a blit stage, execute a blit.
+          //               if (ps.BlitObj != null && ps.BlitMat != null)
+          //               {
+          //                 //blit
+          //                 rv.BeginRender2D(ps.BlitMat);
+          //                 {
+          //                   //Set the viewport to the whole window to blit the fullscreen quad however set the
+          //                   //scissor to be just the viewport area.
+          //                   //TODO: it would make more sense to have the quad blit just to the given area, and not have to re-set the viewport.
+          //                   //https://stackoverflow.com/questions/33718237/do-you-have-to-call-glviewport-every-time-you-bind-a-frame-buffer-with-a-differe
+          //
+          //                   //This w/h should automatically be set to the size of the current output framebuffer
+          //                   GL.Viewport(0, 0, ps.Size.width, ps.Size.height);
+          //                   DrawCall.Draw(Gu.World.WorldProps, rv, ps.BlitObj);
+          //                 }
+          //                 rv.EndRender2D();
+          //               }
+
+          // SaveFBOsPostRender();
+
+          ps->endRender();
+          _currentStage = nullptr;
+        }
+      }
+      // Gu.Prof($ "End {ps.PipelineStageEnum.ToString()}");
+    }
+  }
+  endRenderToView(rv);
 }
 void Renderer::endRenderToWindow() {}
-
-#pragma endregion
+bool Renderer::beginRenderToView(RenderView* rv) {
+  _currentView = rv;
+  Gu::context()->gpu()->setState(GpuRenderState());  // clear
+  CheckErrorsDbg();
+  return true;
+}
+void Renderer::endRenderToView(RenderView* rv) {
+  _currentView = nullptr;
+}
 #pragma region Window
 
 Window::Window() {}

@@ -743,38 +743,7 @@ public:
   virtual void update(float dt, mat4* parent = nullptr) override;
   void computeView(RenderView* rv);
 };
-class RenderView {
-private:
-  vec2 _uv0;
-  vec2 _uv1;
-  string_t _name;
-  uptr<Viewport> _viewport;
-  sptr<Camera> _camera;
-  uptr<Overlay> _overlay;
-  bool _enabled = true;
-  void syncCamera();
 
-public:
-  sptr<Camera> camera() { return _camera; }
-  Viewport* viewport() { return _viewport.get(); }
-  Overlay* overlay() { return _overlay.get(); }
-  bool enabled() { return _enabled; }
-
-  RenderView(string_t name, vec2 uv0, vec2 uv1, int sw, int sh);
-  void setSize(vec2 uv0, vec2 uv1, int sw, int sh);
-  void onResize(int sw, int sh);
-  void updateDimensions(int cur_output_fbo_w, int cur_output_fbo_h);
-  box2i computeScaledView(vec2 uv0, vec2 uv1, int width, int height);
-};
-class Component {
-public:
-  virtual void update(Bobj* obj, float dt) {}
-};
-class InputController : public Component {
-public:
-  InputController();
-  virtual void update(Bobj* obj, float dt) override;
-};
 class GpuRenderState {
 public:
   // State switches to prevent unnecessary gpu context changes.
@@ -803,6 +772,66 @@ public:
 
   void setState(const GpuRenderState& rs, bool force = false);
 };
+class PipelineStage {
+  int _width;
+  int _height;
+
+public:
+  int width() { return _width; }
+  int height() { return _height; }
+  bool beginRender(bool forceclear);
+  void endRender();
+};
+class Renderer {
+  std::vector<uptr<PipelineStage>> _pipelineStages;
+  PipelineStage* _currentStage=nullptr;
+  RenderView* _currentView=nullptr;
+  bool beginRenderToView(RenderView* rv);
+  void endRenderToView(RenderView* rv);  
+public:
+  void beginRenderToWindow();
+  void renderViewToWindow(RenderView* rv);
+  void endRenderToWindow();
+};
+class Picker {
+public:
+  void updatePickedPixel() {}
+};
+class RenderView {
+private:
+  vec2 _uv0;
+  vec2 _uv1;
+  string_t _name;
+  uptr<Viewport> _viewport;
+  sptr<Camera> _camera;
+  uptr<Overlay> _overlay;
+  bool _enabled = true;
+  void syncCamera();
+  Viewport* getClipViewport();
+
+public:
+  sptr<Camera> camera() { return _camera; }
+  Viewport* viewport() { return _viewport.get(); }
+  Overlay* overlay() { return _overlay.get(); }
+  bool enabled() { return _enabled; }
+
+  RenderView(string_t name, vec2 uv0, vec2 uv1, int sw, int sh);
+  void setSize(vec2 uv0, vec2 uv1, int sw, int sh);
+  void onResize(int sw, int sh);
+  void updateDimensions(int cur_output_fbo_w, int cur_output_fbo_h);
+  box2i computeScaledView(vec2 uv0, vec2 uv1, int width, int height);
+  bool beginPipelineStage(PipelineStage* ps);
+  void endPipelineStage(PipelineStage* ps);
+};
+class Component {
+public:
+  virtual void update(Bobj* obj, float dt) {}
+};
+class InputController : public Component {
+public:
+  InputController();
+  virtual void update(Bobj* obj, float dt) override;
+};
 class World {
   std::vector<b2_mtex> _mtexs;
   std::vector<b2_objdata> _objdatas;
@@ -824,6 +853,7 @@ public:
   void cull(RenderView* rv, Bobj* ob = nullptr);
   uptr<Bobj> createOb(const string_t& name, b2_objdata* dat);
   void pick();
+  void renderPipeStage(RenderView* rv, PipelineStage* ps);
 };
 class VisibleStuff {
 public:
@@ -839,16 +869,7 @@ public:
     f->second.insert(ob);
   }
 };
-class Renderer {
-public:
-  void beginRenderToWindow();
-  void renderViewToWindow(RenderView* rv);
-  void endRenderToWindow();
-};
-class Picker {
-public:
-  void updatePickedPixel() {}
-};
+
 class Window {
 public:
   enum class WindowState { Created, Running, Quit };
@@ -891,7 +912,9 @@ public:
   Renderer* renderer() { return _renderer.get(); }
   Picker* picker() { return _picker.get(); }
   Gpu* gpu() { return _gpu.get(); }
-  
+  int width() { return _width; }
+  int height() { return _height; }
+
   Window();
   virtual ~Window();
   void init(int, int, std::string, GLFWwindow* share = nullptr);
