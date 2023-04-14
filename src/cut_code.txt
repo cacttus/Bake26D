@@ -607,3 +607,85 @@
 //     return return_method;
 //   }
 // };
+
+// void Window::initEngine() {
+// //   glEnable(GL_DEPTH_TEST);
+// //   glEnable(GL_SCISSOR_TEST);
+// //   glDisable(GL_CULL_FACE);
+// //   glFrontFace(GL_CCW);
+// //   glEnable(GL_BLEND);
+// //   glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
+// //   glEnable(GL_DEBUG_OUTPUT);
+// //   glEnable(GL_DEBUG_OUTPUT_SYNCHRONOUS);
+// //   glClearColor(0.89, 0.91, 0.91, 1.0);
+// //   CheckErrorsDbg();
+// //
+// //   auto testpath = Gu::relpath("../data/tex/stpeter.jpg");
+// //   _testTex = std::make_unique<Texture>(Image::from_file(testpath.string()).get(), true);
+// //
+// //   _drawQuads = std::make_unique<DrawQuads>();
+// //   _drawQuads->testMakeQuads();
+// //   _drawQuads->copyToGpu();
+// //   _objShader = std::make_unique<Shader>(Gu::assetpath("shader/b26obj.vs.glsl"), Gu::assetpath("/shader/b26obj.gs.glsl"), Gu::assetpath("/shader/b26obj.fs.glsl"));
+// //
+// //
+// //
+// //   // going away
+// //   float d = 4;
+// //   GpuObj ob;
+// //   ob._mat = mat4(1.0);
+// //   ob._mat = glm::scale(ob._mat, vec3(3, 3, 3));
+// //   ob._mat = glm::translate(ob._mat, vec3(-d * 3, 1, 0));
+// //   ob._tex = vec4(0, 0, 1, 1);  // looks like this is upside down could be a data transfer issue.
+// //   ob._texid = 0;
+// //   _objs.push_back(ob);
+// //   ob._mat = mat4(1.0);
+// //   ob._mat = glm::scale(ob._mat, vec3(3, 3, 3));
+// //   ob._mat = glm::translate(ob._mat, vec3(-d * 2, 1, 0));
+// //   ob._tex = vec4(0, 0, 1, 1);
+// //   ob._texid = 1;
+// //   _objs.push_back(ob);
+// //   ob._mat = mat4(1.0);
+// //   ob._mat = glm::scale(ob._mat, vec3(3, 3, 3));
+// //   ob._mat = glm::translate(ob._mat, vec3(-d * 1, 1, 0));
+// //   ob._tex = vec4(0, 0, 1, 1);
+// //   ob._texid = 2;
+// //   _objs.push_back(ob);
+// //   ob._mat = mat4(1.0);
+// //   ob._mat = glm::scale(ob._mat, vec3(3, 3, 3));
+// //   ob._mat = glm::translate(ob._mat, vec3(-d * 0, 1, 0));
+// //   ob._tex = vec4(0, 0, 1, 1);
+// //   ob._texid = 3;
+// //   _objs.push_back(ob);
+// //
+// //   _objBuf = std::make_unique<GpuBuffer>(sizeof(GpuObj) * _objs.size(), _objs.data());
+// //   _objVao = std::make_unique<VertexArray>();
+//
+//
+// }
+  // Gu.Context.GameWindow.Context.SwapBuffers();
+  // Gu.Context.Gpu.ExecuteCallbacks_RenderThread();
+  //   }
+  //   else {
+  //     glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
+  //
+  //     // TODO: views + cameras.
+  //
+  //     auto cam = Gu::world()->activeCamera();
+  //
+  //     cam->updateViewport(_width, _height);  //_proj shouldbe on the window
+  //
+  //     // draw quads test
+  //     _drawQuads->draw(cam.get(), _testTex.get());
+  //
+  //     // this is going away we're going to 'collect bobjs'
+  //     //  objs test
+  //     _objShader->bind();
+  //     _objShader->setCameraUfs(cam.get());
+  //     _objShader->setTextureUf(Gu::world()->objtexs(), 0, "_textures");
+  //     _objShader->bindSSBBlock("_ufGpuObj_Block", _objBuf.get());
+  //     _objVao->bind();
+  //     glDrawArrays(GL_POINTS, 0, _objs.size());
+  //     _objVao->unbind();
+  //     _objShader->unbind();
+  //   }

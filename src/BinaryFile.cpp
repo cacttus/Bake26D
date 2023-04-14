@@ -4,16 +4,14 @@
 namespace B26D {
 
 #pragma region BinaryFile : Methods
-BinaryFile::BinaryFile() {
-}
+BinaryFile::BinaryFile() {}
 BinaryFile::BinaryFile(size_t buffer_size) {
   _data.resize(buffer_size);
 }
 BinaryFile::~BinaryFile() {
   _data.resize(0);
 }
-void BinaryFile::validateRead(size_t outSize, size_t readCount) {
-}
+void BinaryFile::validateRead(size_t outSize, size_t readCount) {}
 void BinaryFile::rewind() {
   // - Rewind the file pointer
   iFilePos = 0;
@@ -60,7 +58,8 @@ bool BinaryFile::eatTo(int8_t k) {
   // - eats until character (increments buffer pointer)
   int8_t c;
   while ((c = at()) != k) {
-    if (get() == -1) return 0;
+    if (get() == -1)
+      return 0;
     {  // inc pointer
     }
   }
@@ -301,6 +300,9 @@ void BinaryFile::readMat4(glm::mat4& val, size_t offset) {
 void BinaryFile::readString(std::string& val, size_t offset) {
   int32_t iStringLen = 0;
   readInt32(iStringLen);
+
+  Assert(iStringLen < 32768);
+  Assert(iStringLen >= 0);
 
   if (iStringLen > 0) {
     char* buf = new char[iStringLen + 1];

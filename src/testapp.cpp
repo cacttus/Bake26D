@@ -1751,7 +1751,7 @@ void Camera::computeView(RenderView* rv) {
 #pragma endregion
 #pragma region Bobj
 
-Bobj::Bobj(string_t&& name, const b2_objdata* data) {
+Bobj::Bobj(string_t&& name, b2_objdata* data) {
   _id = Gu::genId();
   _name = name;
   _data = data;
@@ -1779,6 +1779,26 @@ void Bobj::update(float dt, mat4* parent) {
     if (child->visible()) {
       child->update(dt, &_world);
     }
+  }
+
+  // animation..
+
+  // create gpuobj
+  if (_data != nullptr) {
+    _gpuObj._mat = _world;
+    const b2_frame* fr = _frame;
+    if (fr == nullptr) {
+      fr = &_data->actions()[0].frames()[0];
+    }
+    Assert(fr != nullptr);
+    auto texs = Gu::world()->bobjTexs();
+    float w = 1.0f / (float)texs[fr->_texid-1]._w; //note invalid - texid doe snot directly map
+    float h = 1.0f / (float)texs[fr->_texid-1]._h;
+    _gpuObj._tex = fr->texpos();
+    _gpuObj._tex.x *= w;
+    _gpuObj._tex.y *= h;
+    _gpuObj._tex.z *= w;
+    _gpuObj._tex.w *= h;
   }
 }
 void Bobj::calcBoundBox(box3* parent) {
@@ -1925,9 +1945,9 @@ void InputController::update(Bobj* obj, float delta) {
 World::World() {
   Assert(Gu::context() != nullptr);
 
-  auto normpath = Gu::relpath("../output/mt_normal_depth.png");
-  auto colpath = Gu::relpath("../output/mt_color.png");
-  auto metapath = Gu::relpath("../output/b2_meta.bin");
+  auto normpath = Gu::relpath("../b26out/mt_normal_depth.png");
+  auto colpath = Gu::relpath("../b26out/mt_color.png");
+  auto metapath = Gu::relpath("../b26out/b2_meta.bin");
 
   if (!Gu::exists(normpath) || !Gu::exists(colpath) || !Gu::exists(metapath)) {
     Raise(std::string() + "could not find textures: \n" + (normpath.string()) + "\n" + (colpath.string()) + "\n run the blender python script first");
@@ -1948,7 +1968,7 @@ World::World() {
   // createOb("testobject", &_objdatas[0]);
   auto cam = std::make_shared<Camera>("MainCamera");
   cam->components().push_back(std::make_unique<InputController>());
-  cam->pos() = vec3(0, 2, 10);
+  cam->pos() = vec3(0, 2, -10);
   _activeCamera = cam;
   _root->addChild(cam);
 
@@ -1984,6 +2004,7 @@ void World::cull(RenderView* rv, Bobj* ob) {
 }
 void World::loadD26Meta(path_t loc) {
   msg("Loading metadata " + loc.string());
+  msg(" expects v" + c_MetaFileVersionMajor + "." + c_MetaFileVersionMinor);
 
   BinaryFile bf;
   bf.loadFromDisk(loc.string());
@@ -1991,6 +2012,11 @@ void World::loadD26Meta(path_t loc) {
   int hdr_2 = bf.readByte();
   int hdr_m = bf.readByte();
   int hdr_d = bf.readByte();
+
+  int major = bf.readInt32();
+  int minor = bf.readInt32();
+
+  Assert(major == c_MetaFileVersionMajor && minor == c_MetaFileVersionMinor);
 
   int ntexs = bf.readInt32();
   for (int i = 0; i < ntexs; i++) {
@@ -2241,7 +2267,9 @@ void Window::initEngine() {
   CheckErrorsDbg();
 
   auto testpath = Gu::relpath("../data/tex/stpeter.jpg");
-  _testTex = std::make_unique<Texture>(Image::from_file(testpath.string()).get(), true);
+  //_testTex = std::make_unique<Texture>(Image::from_file(testpath.string()).get(), true);
+  _testTex = Texture::singlePixel(vec4(1, 0, 1, 1));
+  // std::make_unique<Texture>(Image::from_file(testpath.string()).get(), true);
 
   _drawQuads = std::make_unique<DrawQuads>();
   _drawQuads->testMakeQuads();
@@ -2250,32 +2278,32 @@ void Window::initEngine() {
   _objShader = std::make_unique<Shader>(Gu::assetpath("shader/b26obj.vs.glsl"), Gu::assetpath("/shader/b26obj.gs.glsl"), Gu::assetpath("/shader/b26obj.fs.glsl"));
 
   // going away
-  float d = 4;
-  GpuObj ob;
-  ob._mat = mat4(1.0);
-  ob._mat = glm::scale(ob._mat, vec3(3, 3, 3));
-  ob._mat = glm::translate(ob._mat, vec3(-d * 3, 1, 0));
-  ob._tex = vec4(0, 0, 1, 1);  // looks like this is upside down could be a data transfer issue.
-  ob._texid = 0;
-  _objs.push_back(ob);
-  ob._mat = mat4(1.0);
-  ob._mat = glm::scale(ob._mat, vec3(3, 3, 3));
-  ob._mat = glm::translate(ob._mat, vec3(-d * 2, 1, 0));
-  ob._tex = vec4(0, 0, 1, 1);
-  ob._texid = 1;
-  _objs.push_back(ob);
-  ob._mat = mat4(1.0);
-  ob._mat = glm::scale(ob._mat, vec3(3, 3, 3));
-  ob._mat = glm::translate(ob._mat, vec3(-d * 1, 1, 0));
-  ob._tex = vec4(0, 0, 1, 1);
-  ob._texid = 2;
-  _objs.push_back(ob);
-  ob._mat = mat4(1.0);
-  ob._mat = glm::scale(ob._mat, vec3(3, 3, 3));
-  ob._mat = glm::translate(ob._mat, vec3(-d * 0, 1, 0));
-  ob._tex = vec4(0, 0, 1, 1);
-  ob._texid = 3;
-  _objs.push_back(ob);
+  // float d = 4;
+  // GpuObj ob;
+  // ob._mat = mat4(1.0);
+  // ob._mat = glm::scale(ob._mat, vec3(3, 3, 3));
+  // ob._mat = glm::translate(ob._mat, vec3(-d * 3, 1, 0));
+  // ob._tex = vec4(0, 0, 1, 1);  // looks like this is upside down could be a data transfer issue.
+  // ob._texid = 0;
+  // _objs.push_back(ob);
+  // ob._mat = mat4(1.0);
+  // ob._mat = glm::scale(ob._mat, vec3(3, 3, 3));
+  // ob._mat = glm::translate(ob._mat, vec3(-d * 2, 1, 0));
+  // ob._tex = vec4(0, 0, 1, 1);
+  // ob._texid = 1;
+  // _objs.push_back(ob);
+  // ob._mat = mat4(1.0);
+  // ob._mat = glm::scale(ob._mat, vec3(3, 3, 3));
+  // ob._mat = glm::translate(ob._mat, vec3(-d * 1, 1, 0));
+  // ob._tex = vec4(0, 0, 1, 1);
+  // ob._texid = 2;
+  // _objs.push_back(ob);
+  // ob._mat = mat4(1.0);
+  // ob._mat = glm::scale(ob._mat, vec3(3, 3, 3));
+  // ob._mat = glm::translate(ob._mat, vec3(-d * 0, 1, 0));
+  // ob._tex = vec4(0, 0, 1, 1);
+  // ob._texid = 3;
+  // _objs.push_back(ob);
 
   _objBuf = std::make_unique<GpuBuffer>(sizeof(GpuObj) * _objs.size(), _objs.data());
   _objVao = std::make_unique<VertexArray>();
@@ -2367,6 +2395,14 @@ void Window::renderViews() {
     // draw quads test
     _drawQuads->draw(cam.get(), _testTex.get());
 
+    _objs.clear();
+    for (auto& c : Gu::world()->root()->children()) {
+      if (c->visible() && c->isBobj()) {
+        _objs.push_back(c->gpuObj());
+      }
+    }
+    _objBuf->copyToGpu(sizeof(GpuObj) * _objs.size(), _objs.data());
+
     // this is going away we're going to 'collect bobjs'
     //  objs test
     _objShader->bind();
@@ -2418,6 +2454,8 @@ void b2_frame::deserialize(BinaryFile* bf) {
 }
 void b2_mtex::deserialize(BinaryFile* bf) {
   _texid = bf->readInt32();
+  _w = bf->readInt32();
+  _h = bf->readInt32();
   auto numimgs = bf->readInt32();
   for (int img = 0; img < numimgs; img++) {
     std::string image = bf->readString();

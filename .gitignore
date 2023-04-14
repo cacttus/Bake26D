@@ -3,6 +3,7 @@ lib
 tmp
 build
 output
+b26out
 obj
 /.vs/
 CMakeCache.txt

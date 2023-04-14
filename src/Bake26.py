@@ -6,7 +6,7 @@
 #   ___x='/home/mario/git/Bake26D/Bake26.py';exec(compile(open(___x).read(), ___x, 'exec'))
 
 # terminal:
-#  clear; ~/Desktop/apps/blender*/blender -b --log-level 0 -P ~/git/Bake26D/src/Bake26.py  -- -i ~/git/Bake26D/assets/ -o ~/git/Bake26D/b26out -l ~/git/Bake26D/assets/_library.blend -p
+#   clear; ~/Desktop/apps/blender*/blender -b --log-level 0 -P ~/git/Bake26D/src/Bake26.py  -- -i ~/git/Bake26D/data/blend/ -o ~/git/Bake26D/b26out -l ~/git/Bake26D/data/blend/_library.blend -p
 #
 # Packing:
 #   Note: Image packing requires blender to have PIL which requires run these commands
@@ -185,11 +185,11 @@ class b2_action:
 class b2_frame:
   def __init__(self):
     self._seq: float = -1  # float
-    self._texid = -1
-    self._x = -1
-    self._y = -1
-    self._w = -1
-    self._h = -1
+    self._texid: int = -1
+    self._x: int = -1
+    self._y: int = -1
+    self._w: int = -1
+    self._h: int = -1
   def serialize(self, bf: BinaryFile):
     bf.writeFloat(self._seq)
     bf.writeInt32(self._texid)
@@ -197,12 +197,8 @@ class b2_frame:
     bf.writeInt32(self._y)
     bf.writeInt32(self._w)
     bf.writeInt32(self._h)
-class b2_tex:
-  def __init__(self):
-    self._texid = -1
-    self._texs: str = []
 
-class PackedTexture:
+class PackedTexture: #b2_mtex
   def __init__(self):
     self._texid = 0
     self._size = 0  # w and h
@@ -228,7 +224,6 @@ class PackedTexture:
       self._texnames.append(texname)
       path = os.path.join(outpath, texname)
       msg("saving " + path)
-      msg(str(master_img.info))
       master_img.save(path)
 
   def copyImages(self, node, master, layer):
@@ -248,6 +243,8 @@ class PackedTexture:
 
   def serialize(self, bf: BinaryFile):
     bf.writeInt32(self._texid)
+    bf.writeInt32(self._size)
+    bf.writeInt32(self._size)
     bf.writeInt32(len(self._texnames))
     for tn in self._texnames:
       bf.writeString(tn)
@@ -391,6 +388,10 @@ class Bake26:
   c_inputFileSwitch = '-i'
   c_framePlaceholder = "####"
   c_OBNM = 'B26'
+
+  c_backupDirName = 'backup'
+  c_metafile_version_major = 0
+  c_metafile_version_minor = 2
 
   # endregion
 
@@ -785,6 +786,7 @@ class Bake26:
 
   def exportPreview(self, obname, actname):
     path = self.actionOutputPath(obname, actname)
+    msg("path="+str(path))
     assert(os.path.exists(path))
     ext = self._data._fileOutputs[ExportLayer.Color].get_extension()
 
@@ -835,17 +837,23 @@ class Bake26:
   def renderAction(self, actioninf, obname, frame, azumith, zenith):
     fpath = self.actionFilePath(obname, actioninf._name, frame, azumith, zenith)
 
-    # this is very important for blender's relpaths
-    dn = os.path.dirname(bpy.data.filepath)
-    if not os.getcwd() == os.path.dirname(bpy.data.filepath):
+    # blender's paths are just screwed up sorry to say. possible bug.
+    # chdir to root then add the // relpath for blender
+    # blender removes the relpath and appends the path to root 
+    # note: blender reports output as 'home/' without root
+
+    dn = os.path.dirname('/') #bpy.data.filepath)
+    if not os.getcwd() == dn:
       os.chdir(dn)
+
+    bpy.context.scene.render.filepath = ''
 
     for outname in self._data._fileOutputs:
       out = self._data._fileOutputs[outname]
       abs_path = fpath + out.get_extension()
-      rel_path = bpy.path.relpath(abs_path)
-      out.base_path = ''
-      out._node.file_slots[0].path = rel_path  # must be in blender cwd
+      #rel_path = bpy.path.relpath(rel_path)
+      out.base_path =  ''
+      out._node.file_slots[0].path = '//' + abs_path
       actioninf._texs[out._layer].append(abs_path)
 
     bpy.ops.render.render(write_still=False)  # use only compositor outputs
@@ -854,7 +862,7 @@ class Bake26:
   def objectOutputPath(self, obname, backup, backup_id):
     path = os.path.abspath(os.path.normpath(self._outPath))
     if backup:
-      path = os.path.join(path, os.path.normpath("backup"))
+      path = os.path.join(path, os.path.normpath(Bake26.c_backupDirName))
       path = os.path.join(path, os.path.normpath(os.path.basename(bpy.data.filepath)))
       path = os.path.join(path, os.path.normpath(obname + "." + str(backup_id)))
     else:
@@ -909,30 +917,8 @@ class Bake26:
     self.writeMetadata(outpath, texs_cpy, pts)
 
   def writeMetadata(self, outpath, texs, pts):
-    '''
-    ptex_count [int32]
-    .. foreach new b2_tex
-      ptex_id [int32]
-      num_texs [int32]
-      .. for num texs
-        tex name [string]
-    sprite_count [int32]
-      .. foreach new b2_obj 
-        id [int32]
-        name [string]
-        action_count [int32]
-        ..foreach new b2_action
-          id [int32]
-          name [string]
-          frame_count [int32]
-          ..foreach new b2_frame
-            tex_id [int32] 
-            sequence_id [float32]
-            x [int32]
-            y [int32]
-            w [int32]
-            h [int32]
-    '''
+    mdpath = os.path.join(outpath, "b2_meta.bin")
+    msg("saving metadata path="+mdpath)
 
     obj_dict = {}
 
@@ -943,16 +929,17 @@ class Bake26:
       Bake26.buildB2Obj(region, region_fname, obj_dict)
 
     # write file
-    mdpath = os.path.join(outpath, "b2_meta.bin")
-    msg("metadata path="+mdpath)
     with open(mdpath, 'wb') as file:
       bf = BinaryFile(file)
 
-      msg("byte thing = " + str(int(ord('B'))))
       bf.writeByte(int(ord('B'.encode('utf-8'))))
       bf.writeByte(int(ord('2'.encode('utf-8'))))
       bf.writeByte(int(ord('M'.encode('utf-8'))))
       bf.writeByte(int(ord('D'.encode('utf-8'))))
+
+      bf.writeInt32(self.c_metafile_version_major)
+      bf.writeInt32(self.c_metafile_version_minor)
+
       # texs
       bf.writeInt32(len(pts))
       for i in range(0, len(pts)):
@@ -1012,7 +999,6 @@ class Bake26:
     seq_str = ifr+"."+ffr
     assert(not seq_str in act._frames)
     seq = float(seq_str)  # "0004.200"
-    msg("seq="+str(seq))
     fr._seqid = seq
     act._frames[seq_str] = fr
 
@@ -1050,7 +1036,7 @@ class Bake26:
 
 
       elif os.path.isdir(color_path):
-        if item != '.':
+        if item != '.' and not Bake26.c_backupDirName in item:
           Bake26.gatherTextures(color_path, texs, False)
 
 

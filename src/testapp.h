@@ -625,13 +625,15 @@ protected:
   std::vector<uptr<Component>> _components;
   std::vector<sptr<Bobj>> _children;
   wptr<Bobj> _parent;
-  const b2_objdata* _data = nullptr;
+  b2_objdata* _data = nullptr;
+  b2_action* _action = nullptr;
+  b2_frame* _frame = nullptr;
   sptr<Mesh> _mesh = nullptr;
   sptr<Material> _material = nullptr;
   box3 _boundBox = box3::one();
   box3 _boundBoxMeshAA;
   oobox3 _boundBoxMeshOO;
-
+  GpuObj _gpuObj;
   // vec3 _vel = vec3(0, 0, 0);//later
   // vec3 _avel = vec3(0, 0, 0);
 
@@ -642,13 +644,19 @@ public:
   uint64_t id() { return _id; }
   string_t& name() { return _name; }
 
+  bool isBobj() { return _data!=nullptr;}
+
   bool& visible() { return _visible; }
+
+  b2_action*& action() { return _action; }
+  b2_frame* frame() { return _frame; }
 
   vec3& pos() { return _pos; }
   quat& rot() { return _rot; }
   vec3& scl() { return _scl; }
   mat4& world() { return _world; }
   vec3 world_pos() { return glm::vec3(_world[3]); }
+  GpuObj& gpuObj() { return _gpuObj; }
 
   vec3& up() { return _up; }
   vec3& right() { return _right; }
@@ -667,7 +675,7 @@ public:
 
   box3& boundBox() { return _boundBox; }
 
-  Bobj(string_t&& name, const b2_objdata* data = nullptr);
+  Bobj(string_t&& name, b2_objdata* data = nullptr);
   virtual ~Bobj();
   virtual void update(float dt, mat4* parent = nullptr);
   void addChild(sptr<Bobj> ob);
@@ -784,10 +792,11 @@ public:
 };
 class Renderer {
   std::vector<uptr<PipelineStage>> _pipelineStages;
-  PipelineStage* _currentStage=nullptr;
-  RenderView* _currentView=nullptr;
+  PipelineStage* _currentStage = nullptr;
+  RenderView* _currentView = nullptr;
   bool beginRenderToView(RenderView* rv);
-  void endRenderToView(RenderView* rv);  
+  void endRenderToView(RenderView* rv);
+
 public:
   void beginRenderToWindow();
   void renderViewToWindow(RenderView* rv);
@@ -833,6 +842,9 @@ public:
   virtual void update(Bobj* obj, float dt) override;
 };
 class World {
+  const int c_MetaFileVersionMajor = 0;
+  const int c_MetaFileVersionMinor = 2;
+
   std::vector<b2_mtex> _mtexs;
   std::vector<b2_objdata> _objdatas;
   uptr<TextureArray> _objtexs;  // we're going to use arrays
@@ -847,6 +859,7 @@ public:
   TextureArray* objtexs() { return _objtexs.get(); }
   sptr<Camera> activeCamera() { return _activeCamera; }
   VisibleStuff* visibleStuff() { return _visibleStuff.get(); }
+  std::vector<b2_mtex>& bobjTexs(){return _mtexs;}
 
   World();
   void update(float dt);
@@ -945,6 +958,8 @@ public:
   int32_t _id = -1;
   std::string _name = "";
   std::vector<b2_action> _actions;
+  
+  std::vector<b2_action>& actions() { return _actions; }
   void deserialize(BinaryFile* bf);
 };
 class b2_action {
@@ -952,6 +967,8 @@ public:
   int32_t _id = -1;
   std::string _name = "";
   std::vector<b2_frame> _frames;
+
+  std::vector<b2_frame>& frames() { return _frames; }
   void deserialize(BinaryFile* bf);
 };
 class b2_frame {
@@ -963,11 +980,16 @@ public:
   int32_t _y = -1;
   int32_t _w = -1;
   int32_t _h = -1;
+
+  vec4 texpos ()const {return vec4(_x,_y,_w,_h);}
+
   void deserialize(BinaryFile* bf);
 };
 class b2_mtex {
 public:
   int32_t _texid = -1;
+  int32_t _w;
+  int32_t _h;
   std::vector<std::string> _images;
   void deserialize(BinaryFile* bf);
 };
