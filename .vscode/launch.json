@@ -40,7 +40,7 @@
     // },
     {
       "name": "C++ Debug",
-      "type": "cppdbg",
+      "type": "cppdbg",//cppdbg //https://stackoverflow.com/questions/68538584/vscode-debugger-freezes
       "request": "launch",
       "preLaunchTask": "CMAKE_BUILD_DEBUG",
       "program": "${workspaceFolder}/bin/Debug/testapp", //${command:cmake.launchTargetPath}",

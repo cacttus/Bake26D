@@ -561,6 +561,7 @@ class Bake26:
     # https://blender.stackexchange.com/questions/105193/unable-to-store-renderings-in-openexr-when-using-the-multiprocessing-in-python
     # https://blender.stackexchange.com/questions/194564/is-it-possible-to-save-depth-values-and-rendered-image-in-different-formats
 
+    #position only in cycles
     bpy.context.scene.use_nodes = True
     bpy.context.scene.view_layers["ViewLayer"].use_pass_ambient_occlusion = False
     bpy.context.scene.view_layers["ViewLayer"].use_pass_combined = False
@@ -568,14 +569,19 @@ class Bake26:
     bpy.context.scene.view_layers["ViewLayer"].use_pass_diffuse_direct = True
     bpy.context.scene.view_layers["ViewLayer"].use_pass_diffuse_indirect = False
     bpy.context.scene.view_layers["ViewLayer"].use_pass_emit = False
-    bpy.context.scene.view_layers["ViewLayer"].use_pass_environment = True
-    bpy.context.scene.view_layers["ViewLayer"].use_pass_glossy_color = True
-    bpy.context.scene.view_layers["ViewLayer"].use_pass_glossy_direct = True
-    bpy.context.scene.view_layers["ViewLayer"].use_pass_glossy_indirect = True
+    bpy.context.scene.view_layers["ViewLayer"].use_pass_environment = False #True
+    bpy.context.scene.view_layers["ViewLayer"].use_pass_glossy_color = False #True
+    bpy.context.scene.view_layers["ViewLayer"].use_pass_glossy_direct = False #True
+    bpy.context.scene.view_layers["ViewLayer"].use_pass_glossy_indirect = False #True
     bpy.context.scene.view_layers["ViewLayer"].use_pass_normal = True
-    bpy.context.scene.view_layers["ViewLayer"].use_pass_position = False
+    bpy.context.scene.view_layers["ViewLayer"].use_pass_position = False # may need to use position (easiest) but z would work with some math
     bpy.context.scene.view_layers["ViewLayer"].use_pass_shadow = False
-    bpy.context.scene.view_layers["ViewLayer"].use_pass_z = True
+    bpy.context.scene.view_layers["ViewLayer"].use_pass_z = True  #distance 
+    '''
+    export mist then use origin
+    we must have object origin as reference to depth values. 
+    '''
+    #bpy.context.scene.view_layers["ViewLayer"].use_pass_mist = True  #0-1
     # several more
 
     # remove all existing compositor nodes

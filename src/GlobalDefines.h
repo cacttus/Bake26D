@@ -106,6 +106,12 @@ namespace B26D {
 #define __in_
 #define __out_
 
+//#define GPU_STRUCT struct alignas(16)
+#define GPU_STRUCT struct
+#define SHADER_SHARED
+#define TO_STRING(__x) #__x
+#define SHADER_SHARED_STR TO_STRING(SHADER_SHARED)
+
 #define LogDebug(_msgx) B26D::Log::dbg(std::string() + _msgx, __FILE__, __LINE__)
 #define LogInfo(_msgx) B26D::Log::inf(std::string() + _msgx, __FILE__, __LINE__)
 #define LogWarn(_msgx) B26D::Log::warn(std::string() + _msgx, __FILE__, __LINE__)
@@ -137,6 +143,16 @@ namespace B26D {
 #define LogDebugCycle(_msgx) _LogXCycle(_msgx, LogDebug)
 
 #define msg(msg) LogInfo(msg)
+
+#define Raise(__str) throw B26D::Exception(__FILE__, __LINE__, (__str))
+#define RaiseDebug(__str) \
+  do {                    \
+    LogDebug(__str);      \
+    Gu::debugBreak();     \
+  } while (0);
+
+#define RaiseNotImplemented() Raise("Method/Function not implemented.")
+
 #define Assert(__x, ...)                                                                                                                                                                  \
   do {                                                                                                                                                                                    \
     if (!(__x)) {                                                                                                                                                                         \
@@ -145,13 +161,6 @@ namespace B26D {
       B26D::Gu::debugBreak();                                                                                                                                                             \
       Raise(str);                                                                                                                                                                         \
     }                                                                                                                                                                                     \
-  } while (0);
-
-#define Raise(__str) throw B26D::Exception(__FILE__, __LINE__, (__str))
-#define RaiseDebug(__str) \
-  do {                    \
-    LogDebug(__str);      \
-    Gu::debugBreak();     \
   } while (0);
 
 #define CheckErrorsRt() Gu::checkErrors(__FILE__, __LINE__)
@@ -163,9 +172,12 @@ namespace B26D {
 
 #define BR2_FORCE_INLINE inline
 
+#define FUZZY_ZERO_EPSILON 0.0000001
+
 #pragma endregion
 #pragma region typedef
 
+typedef std::string str;
 typedef std::string string_t;
 typedef std::wstring wstring_t;
 typedef std::filesystem::path path_t;
@@ -222,15 +234,22 @@ class Overlay;
 class RenderView;
 class Frustum;
 
+class VertexArray;
+class Gpu;
+class GpuRenderState;
+class GpuBuffer;
 class Mesh;
 class Material;
 
+class PipelineStage;
+class Renderer;
+class Picker;
+
+class Shader;
 class Image;
 class ImageFormat;
-class Shader;
-class GpuBuffer;
 class Texture;
-class VertexArray;
+class TextureArray;
 
 class Bobj;
 class Camera;

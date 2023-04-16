@@ -130,14 +130,8 @@ int Gu::run(int argc, char** argv) {
     // win2->scene() = scene;
     // nput controler update () requires a context.. but is in a scene ..
 
-    double lasttime, curtime;
-    lasttime = curtime = glfwGetTime();
     bool exit = false;
     while (!exit) {
-      auto curtime = glfwGetTime();
-      auto delta = (float)(curtime - lasttime);
-      lasttime = curtime;
-
       std::vector<GLFWwindow*> destroy;
       for (auto ite = _windows.begin(); ite != _windows.end(); ite++) {
         auto win = ite->second.get();
@@ -151,7 +145,7 @@ int Gu::run(int argc, char** argv) {
         }
 
         if (_master_context == win) {
-          _world->update(delta);
+          _world->update();
         }
         win->cullViews();
 
@@ -228,6 +222,9 @@ std::string Gu::pad(std::string st, int width, char padchar) {
   std::ostringstream out;
   out << std::internal << std::setfill(padchar) << std::setw(width) << st;
   return out.str();
+}
+bool Gu::isDebug() {
+  return Gu::config()->EnableDebug;
 }
 void Gu::debugBreak() {
 #if defined(__debugbreak)
@@ -603,6 +600,7 @@ Shader::Shader(path_t vert_loc, path_t geom_loc, path_t frag_loc) {
   auto vert = compileShader(GL_VERTEX_SHADER, _vert_src);
   if (vert == 0) {
     _state = ShaderLoadState::Failed;
+    Gu::debugBreak();
     return;
   }
   glAttachShader(_glId, vert);
@@ -611,6 +609,7 @@ Shader::Shader(path_t vert_loc, path_t geom_loc, path_t frag_loc) {
   auto frag = compileShader(GL_FRAGMENT_SHADER, _frag_src);
   if (frag == 0) {
     _state = ShaderLoadState::Failed;
+    Gu::debugBreak();
     return;
   }
   glAttachShader(_glId, frag);
@@ -622,6 +621,7 @@ Shader::Shader(path_t vert_loc, path_t geom_loc, path_t frag_loc) {
     geom = compileShader(GL_GEOMETRY_SHADER, _geom_src);
     if (geom == 0) {
       _state = ShaderLoadState::Failed;
+      Gu::debugBreak();
       return;
     }
     glAttachShader(_glId, geom);
@@ -636,8 +636,9 @@ Shader::Shader(path_t vert_loc, path_t geom_loc, path_t frag_loc) {
     printSrc(_vert_src);
     LogDebug(Shader::getProgramInfoLog(_glId));
     glDeleteProgram(_glId);
-    _state = ShaderLoadState::Failed;
     LogError("Failed to link program");
+    _state = ShaderLoadState::Failed;
+    Gu::debugBreak();
     return;
   }
   glDetachShader(_glId, vert);
@@ -685,98 +686,74 @@ void Shader::parseUniforms() {
       continue;
     }
 
-    bool active = true;
     int location = glGetUniformLocation(_glId, u_name.c_str());
-
+    bool is_struct;
     if (location < 0) {
-      active = false;
       if (u_name.find('.') == std::string::npos) {
-        // There will be tons of inactive uniforms for structures. struct.name
-        // But for what we're doing if it isn't a structure it should be used.
-        Gu::debugBreak();
-      }
-      if (Gu::config()->Debug_Print_Shader_Uniform_Details_Verbose_NotFound) {
-        LogDebug(_name + ": .. Inactve uniform: " + u_name);
+        Raise("Active uniform '" + u_name + "' had an invalid location and was not a structure variable (e.g. Struct._value).");
       }
     }
     else {
-      if (Gu::config()->Debug_Print_Shader_Uniform_Details_Verbose_NotFound) {
-        LogDebug(_name + ": Active uniform: " + u_name);
+      _vars.insert(std::make_pair(u_name, std::make_unique<Uniform>(u_name, location, u_size, u_type)));
+      if (Gu::config()->Debug_Print_Shader_Details_Verbose) {
+        LogDebug(_name + ": Uniform name:" + u_name + " size:" + u_size);
       }
     }
-
-    _uniforms.push_back(std::make_unique<Uniform>(u_name, location, u_size, u_type, active));
   }
 }
 void Shader::parseUniformBlocks() {
   int u_block_count = 0;
   glGetProgramiv(_glId, GL_ACTIVE_UNIFORM_BLOCKS, &u_block_count);
   CheckErrorsRt();
-  for (auto iBlock = 0; iBlock < u_block_count; iBlock++) {
-    int buffer_size_bytes = 0;
-    glGetActiveUniformBlockiv(_glId, iBlock, GL_UNIFORM_BLOCK_DATA_SIZE, &buffer_size_bytes);
-    CheckErrorsRt();
-
-    int binding = 0;
-    glGetActiveUniformBlockiv(_glId, iBlock, GL_UNIFORM_BLOCK_BINDING, &binding);
+  for (auto blockIndex = 0; blockIndex < u_block_count; blockIndex++) {
+    int blockSize = 0;
+    glGetActiveUniformBlockiv(_glId, blockIndex, GL_UNIFORM_BLOCK_DATA_SIZE, &blockSize);
     CheckErrorsRt();
 
     std::string u_name = "DEADDEADDEADDEADDEADDEADDEADDEADDEADDEADDEADDEADDEADDEADDEADDEAD";
     int u_name_len = 0;
-    glGetActiveUniformBlockName(_glId, iBlock, u_name.length(), &u_name_len, u_name.data());
+    glGetActiveUniformBlockName(_glId, blockIndex, u_name.length(), &u_name_len, u_name.data());
     CheckErrorsRt();
     u_name = u_name.substr(0, u_name_len);
 
-    bool active = true;
-    if (binding < 0) {
-      active = false;
-      if (Gu::config()->Debug_Print_Shader_Uniform_Details_Verbose_NotFound) {
-        LogDebug(_name + ": Inactive uniform block: " + u_name);
-      }
-    }
-    else {
-      if (Gu::config()->Debug_Print_Shader_Uniform_Details_Verbose_NotFound) {
-        LogDebug(_name + ": Active uniform block: " + u_name);
-      }
+    GLuint blockBinding = _nextBufferBindingIndex++;
 
-      _maxBufferBindingIndex = glm::max(_maxBufferBindingIndex, binding);
+    // these are all the same.
+    auto blockidx_test2 = glGetProgramResourceIndex(_glId, GL_UNIFORM_BLOCK, u_name.c_str());
+    GLuint blockidx_test = glGetUniformBlockIndex(_glId, u_name.c_str());
+    Assert(blockidx_test == blockIndex);
+    Assert(blockidx_test2 == blockIndex);
+
+    glUniformBlockBinding(_glId, blockIndex, blockBinding);
+
+    if (Gu::config()->Debug_Print_Shader_Details_Verbose) {
+      LogDebug(_name + ": Uniform block: " + u_name + " index: " + blockIndex + " binding: " + blockBinding + " size(B): " + blockSize);
     }
 
-    _uniformBlocks.push_back(std::make_unique<BufferBlock>(u_name, binding, buffer_size_bytes, active, GL_UNIFORM_BUFFER));
+    _vars.insert(std::make_pair(u_name, std::make_unique<BufferBlock>(u_name, blockIndex, blockBinding, blockSize, GL_UNIFORM_BUFFER)));
   }
-  // check duplicate binding indexes for blocks
-  for (int dupe_loc = 0; dupe_loc < _uniformBlocks.size(); dupe_loc++) {
-    for (int dupe_loc2 = dupe_loc + 1; dupe_loc2 < _uniformBlocks.size(); dupe_loc2++) {
-      auto ub0 = _uniformBlocks[dupe_loc].get();
-      auto ub1 = _uniformBlocks[dupe_loc2].get();
-
-      if (ub0->_bindingIndex == ub1->_bindingIndex) {
-        LogError("Duplicate Uniform buffer binding index " + ub0->_bindingIndex + " for " + ub0->_name + " and " + ub1->_name + "");
-      }
-      Gu::debugBreak();
-      _state = ShaderLoadState::Failed;
-    }
-  }
+  checkDupeBindings();
 }
 void Shader::parseSSBOs() {
   CheckErrorsRt();
   int ssb_count;
   glGetProgramInterfaceiv(_glId, GL_SHADER_STORAGE_BLOCK, GL_ACTIVE_RESOURCES, &ssb_count);
 
-  for (int i = 0; i < ssb_count; i++) {
-    string_t ssbo_name = "DEADDEADDEADDEADDEADDEADDEADDEADDEADDEADDEADDEADDEADDEADDEADDEAD";
+  for (int blockIndex = 0; blockIndex < ssb_count; blockIndex++) {
+    string_t blockName = "DEADDEADDEADDEADDEADDEADDEADDEADDEADDEADDEADDEADDEADDEADDEADDEAD";
     int u_name_len = 0;
-    glGetProgramResourceName(_glId, GL_SHADER_STORAGE_BLOCK, i, ssbo_name.length(), &u_name_len, ssbo_name.data());
-    ssbo_name = ssbo_name.substr(0, u_name_len);
+    glGetProgramResourceName(_glId, GL_SHADER_STORAGE_BLOCK, blockIndex, blockName.length(), &u_name_len, blockName.data());
+    blockName = blockName.substr(0, u_name_len);
     if (glGetError() == GL_NO_ERROR) {
-      auto block_index = glGetProgramResourceIndex(_glId, GL_SHADER_STORAGE_BLOCK, ssbo_name.c_str());
+      auto block_index = glGetProgramResourceIndex(_glId, GL_SHADER_STORAGE_BLOCK, blockName.c_str());
       Assert(block_index >= 0);
 
-      _maxBufferBindingIndex++;
-      glShaderStorageBlockBinding(_glId, block_index, _maxBufferBindingIndex);
-      _ssbos.push_back(std::make_unique<BufferBlock>(ssbo_name, _maxBufferBindingIndex, 0, true, GL_SHADER_STORAGE_BUFFER));
-      if (Gu::config()->Debug_Print_Shader_Uniform_Details_Verbose_NotFound) {
-        LogDebug(_name + ": Active SSBO " + ssbo_name);
+      GLuint blockBinding = _nextBufferBindingIndex++;
+      glShaderStorageBlockBinding(_glId, block_index, blockBinding);
+      _vars.insert(std::make_pair(blockName, std::make_unique<BufferBlock>(blockName, 0, blockBinding, true, GL_SHADER_STORAGE_BUFFER)));
+
+      if (Gu::config()->Debug_Print_Shader_Details_Verbose) {
+        LogDebug(_name + ": Shader Storage Block: " + blockName + " index: " + blockIndex + " binding: " + blockBinding);
       }
     }
     else {
@@ -785,25 +762,26 @@ void Shader::parseSSBOs() {
     }
   }
   CheckErrorsRt();
+  checkDupeBindings();
 }
-void Shader::bindSSBBlock(const string_t&& name, GpuBuffer* g) {
-  for (auto& s : _ssbos) {
-    if (s->_name == name) {
-      bindBlockFast(s.get(), g);
-      return;
+void Shader::checkDupeBindings() {
+  // check duplicate binding indexes for blocks
+  for (auto it1 = _vars.begin(); it1 != _vars.end(); it1++) {
+    auto it2 = it1;
+    std::advance(it2, 1);
+    for (; it2 != _vars.end(); it2++) {
+      auto ub0 = dynamic_cast<BufferBlock*>(it1->second.get());
+      auto ub1 = dynamic_cast<BufferBlock*>(it2->second.get());
+
+      if (ub0 != nullptr && ub1 != nullptr && ub0 != ub1) {
+        if (ub0->_bindingPoint == ub1->_bindingPoint) {
+          LogError("Duplicate Uniform buffer binding index " + ub0->_bindingPoint + " for " + ub0->_name + " and " + ub1->_name + "");
+          _state = ShaderLoadState::Failed;
+          Gu::debugBreak();
+        }
+      }
     }
   }
-  Raise("coudl not find ssbo block " + name);
-}
-void Shader::bindBlockFast(BufferBlock* u, GpuBuffer* b) {
-  Assert(b != nullptr);
-  glBindBufferBase(u->_buftype, u->_bindingIndex, b->glId());  // GL_UNIFORM_BUFFER GL_SHADER_STO..
-  CheckErrorsDbg();
-  glBindBuffer(u->_buftype, b->glId());
-  CheckErrorsDbg();
-  u->_hasBeenBound = true;
-  // u->_hasBeenCopiedInitially = b->CopyToGpuCalled;
-  // u->_hasBeenCopiedThisFrame = b->CopyToGpuCalledFrameId == Gu.Context.FrameStamp;
 }
 std::string Shader::debugFormatSrc(std::vector<std::string> lines) {
   std::ostringstream st;
@@ -837,15 +815,18 @@ std::string Shader::getProgramInfoLog(GLuint prog) {
 Shader::ShaderMeta::ShaderMeta() {
   LogInfo("Loading shader metadata");
 
-  std::string c_shared = "//SHADER_SHARED";
+  std::string c_shared = std::string(SHADER_SHARED_STR);
 
   auto structs_raw = Gu::readFile(Gu::relpath("../src/gpu_structs.h"));
+
   auto da = structs_raw.find(c_shared);
   Assert(da != string_t::npos);
   da += c_shared.length();
   auto db = structs_raw.find(c_shared, da);
   Assert(db != string_t::npos);
   auto strStructs = structs_raw.substr(da, db - da);
+
+  strStructs = StringUtil::replaceAll(strStructs, str("GPU_STRUCT"), str("struct"));
 
   _globals = Gu::readFile(Gu::assetpath("shader/globals.glsl"));
   _globals.append("\n");
@@ -957,36 +938,50 @@ GLuint Shader::compileShader(GLenum type, std::vector<std::string>& src_lines) {
 void Shader::printSrc(std::vector<std::string> lines) {
   Log::print(debugFormatSrc(lines), Log::CC_CYAN);
 }
-void Shader::setCameraUfs(Camera* cam) {
-  // msg("cam=\nproj\n" + cam->proj() + "\nview\n" + cam->view() + "\n\n");
-
-  for (auto ite = _uniformBlocks.begin(); ite != _uniformBlocks.end(); ite++) {
-    if (ite->get()->_name == "_ufGpuCamera_Block") {
-      bindBlockFast(ite->get(), cam->uniformBuffer());
+void Shader::bindBlock(const string_t&& name, GpuBuffer* g) {
+  auto v = getVar(name);
+  bindBlock(dynamic_cast<BufferBlock*>(v), g);
+}
+void Shader::beginRender() {
+  bind();
+}
+void Shader::endRender() {
+  for (auto ite = _vars.begin(); ite != _vars.end(); ite++) {
+    if (!ite->second->_hasBeenBound) {
+      LogWarn(_name + ": Variable '" + ite->second->_name + "' was not bound before render.");
     }
+    ite->second->_hasBeenBound = false;
   }
-  //
-  //
-  //   auto proj_loc = glGetUniformLocation(_glId, "_projMatrix");
-  //   Assert(proj_loc == -1);
-  //   glProgramUniformMatrix4fv(_glId, proj_loc, 1, GL_FALSE, (GLfloat*)&cam->proj());
-  //
-  //   auto view_loc = glGetUniformLocation(_glId, "_viewMatrix");
-  //   Assert(view_loc == -1);
-  //   glProgramUniformMatrix4fv(_glId, view_loc, 1, GL_FALSE, (GLfloat*)&cam->view());
+}
+void Shader::bindBlock(BufferBlock* u, GpuBuffer* b) {
+  Assert(u != nullptr);
+  Assert(b != nullptr);
+  glBindBufferBase(u->_buftype, u->_bindingPoint, b->glId());
+  CheckErrorsDbg();
+  // glBindBufferRange
+
+  u->_hasBeenBound = true;
+}
+Shader::ShaderVar* Shader::getVar(const str& name) {
+  auto it = _vars.find(name);
+  Assert(it != _vars.end(), "Could not find shader var name:" + name);
+  return it->second.get();
 }
 void Shader::setTextureUf(Texture* tex, GLuint channel, string_t loc) {
-  auto tex_loc1 = glGetUniformLocation(_glId, loc.c_str());
-  glProgramUniform1i(_glId, tex_loc1, channel);
-  tex->bind(channel);
-  CheckErrorsDbg();
+  setTextureUf(tex->glId(), channel, loc);
 }
 void Shader::setTextureUf(TextureArray* tex, GLuint channel, string_t loc) {
+  setTextureUf(tex->glId(), channel, loc);
+}
+void Shader::setTextureUf(GLuint glid, GLuint channel, string_t loc) {
+  auto sv = getVar(loc);
   auto tex_loc1 = glGetUniformLocation(_glId, loc.c_str());
   glProgramUniform1i(_glId, tex_loc1, channel);
-  tex->bind(channel);
+  glBindTextureUnit(channel, glid);
+  sv->_hasBeenBound = true;
   CheckErrorsDbg();
 }
+
 #pragma endregion
 #pragma region VertexArray
 
@@ -1072,8 +1067,12 @@ Material::~Material() {}
 #pragma endregion
 #pragma region GpuBuffer
 
-GpuBuffer::GpuBuffer(size_t size, void* data, uint32_t flags) {
+GpuBuffer::GpuBuffer() {
   glCreateBuffers(1, &_glId);
+  // glNamedBufferStorage(_glId, size, data, flags);//for immutable buffers
+  CheckErrorsDbg();
+}
+GpuBuffer::GpuBuffer(size_t size, const void* data, uint32_t flags) : GpuBuffer() {
   // glNamedBufferStorage(_glId, size, data, flags);//for immutable buffers
   glNamedBufferData(_glId, size, data, flags);
   CheckErrorsDbg();
@@ -1081,7 +1080,7 @@ GpuBuffer::GpuBuffer(size_t size, void* data, uint32_t flags) {
 GpuBuffer::~GpuBuffer() {
   glDeleteBuffers(1, &_glId);
 }
-void GpuBuffer::copyToGpu(size_t size, void* data, size_t offset) {
+void GpuBuffer::copyToGpu(size_t size, const void* data, size_t offset) {
   // glNamedBufferSubData(_glId, offset, size, data);
   glNamedBufferData(_glId, size, data, GL_DYNAMIC_DRAW);
   CheckErrorsDbg();
@@ -1128,12 +1127,12 @@ void TextureBase::setStorageMode() {
     glPixelStorei(GL_UNPACK_ALIGNMENT, 1);
   }
 }
-void TextureBase::bind(int32_t channel) {
-  glBindTextureUnit(channel, _glId);
-}
-void TextureBase::unbind(int32_t channel) {
-  glBindTextureUnit(channel, 0);
-}
+// void TextureBase::bind(int32_t channel) {
+//   glBindTextureUnit(channel, _glId);
+// }
+// void TextureBase::unbind(int32_t channel) {
+//   glBindTextureUnit(channel, 0);
+// }
 int TextureBase::calcMipLevels(int w, int h, int minwh) {
   float mwidth = w;
   float mheight = h;
@@ -1203,6 +1202,15 @@ TextureArray::TextureArray(const std::vector<uptr<Image>>& imgs, bool mipmaps) :
 TextureArray::~TextureArray() {
   glDeleteTextures(1, &_glId);
 }
+uptr<TextureArray> TextureArray::test() {
+  std::vector<uptr<Image>> images;
+  images.push_back(std::move(Image::from_file(Gu::relpath("../data/tex/Церковь Спаса на Крови.jpg").string())));
+  images.push_back(std::move(Image::from_file(Gu::relpath("../data/tex/stpeter.jpg").string())));
+  images.push_back(std::move(Image::from_file(Gu::relpath("../data/tex/дэвид.jpg").string())));
+  images.push_back(std::move(Image::from_file(Gu::relpath("../data/tex/Сикстинская капелла.jpg").string())));
+  TextureArray::conform(images);
+  return std::make_unique<TextureArray>(images, true);
+}
 uptr<TextureArray> TextureArray::singlePixel(const vec4& color, int count) {
   uptr<TextureArray> ret = std::make_unique<TextureArray>(1, 1, Gu::imageFormat(ImageFormatType::RGBA8), false, count);
 
@@ -1222,6 +1230,9 @@ void TextureArray::copyToGpu(int index, const void* data) {
 void TextureArray::copyToGpu(int x, int y, int w, int h, int index, const void* data) {
   Assert(index < _count);
   setStorageMode();
+  // glTexImage3D(GL_TEXTURE_2D_ARRAY, 0, format, width, height, num_layers, ...);
+  // glTextureSubImage3D(_glId, 0, x, y, index, w, h, 1, _format->glFormat(), _format->glDatatype(), data);
+  // For two-dimensional array textures, the z index refers to the slice index.
   glTextureSubImage3D(_glId, 0, x, y, index, w, h, 1, _format->glFormat(), _format->glDatatype(), data);
   CheckErrorsDbg();
 }
@@ -1407,13 +1418,12 @@ void DrawQuads::reset() {
 }
 void DrawQuads::draw(Camera* cam, Texture* tex) {
   copyToGpu();
-  _shader->bind();
-  _shader->setCameraUfs(cam);
+  _shader->beginRender();
   _shader->setTextureUf(tex, 0, "_texture");
   _vao->bind();
   glDrawElements(GL_TRIANGLES, _index * 6, GL_UNSIGNED_INT, 0);
   _vao->unbind();
-  _shader->unbind();
+  _shader->endRender();
 }
 void GpuQuad::zero() {
   _verts[0]._v = vec3(0, 0, 0);
@@ -1543,8 +1553,12 @@ Viewport* RenderView::getClipViewport() {
   }
 }
 #pragma endregion
+
+Gpu::Gpu() {
+  _last = std::make_unique<GpuRenderState>();
+}
 void Gpu::setState(const GpuRenderState& state, bool force) {
-  if (state.cullFaceEnabled != _last.cullFaceEnabled || force) {
+  if (state.cullFaceEnabled != _last->cullFaceEnabled || force) {
     if (state.cullFaceEnabled) {
       glEnable(GL_CULL_FACE);
     }
@@ -1552,7 +1566,7 @@ void Gpu::setState(const GpuRenderState& state, bool force) {
       glDisable(GL_CULL_FACE);
     }
   }
-  if (state.depthTestEnabled != _last.depthTestEnabled || force) {
+  if (state.depthTestEnabled != _last->depthTestEnabled || force) {
     if (state.depthTestEnabled) {
       glEnable(GL_DEPTH_TEST);
     }
@@ -1560,7 +1574,7 @@ void Gpu::setState(const GpuRenderState& state, bool force) {
       glDisable(GL_DEPTH_TEST);
     }
   }
-  if (state.scissorTestEnabled != _last.scissorTestEnabled || force) {
+  if (state.scissorTestEnabled != _last->scissorTestEnabled || force) {
     if (state.scissorTestEnabled) {
       glEnable(GL_SCISSOR_TEST);
     }
@@ -1570,21 +1584,21 @@ void Gpu::setState(const GpuRenderState& state, bool force) {
   }
 
   if (state.cullFaceEnabled) {
-    if (state.cullFaceMode != _last.cullFaceMode || force) {
+    if (state.cullFaceMode != _last->cullFaceMode || force) {
       glFrontFace(state.cullFaceMode);
     }
-    if (state.frontFaceDirection != _last.frontFaceDirection || force) {
+    if (state.frontFaceDirection != _last->frontFaceDirection || force) {
       glFrontFace(state.frontFaceDirection);
     }
   }
 
   if (state.depthTestEnabled) {
-    if (state.depthMask != _last.depthMask || force) {
+    if (state.depthMask != _last->depthMask || force) {
       glDepthMask(state.depthMask);
     }
   }
 
-  if (state.blendEnabled != _last.blendEnabled || state.blendFactor != _last.blendFactor || state.blendFunc != _last.blendFunc || force) {
+  if (state.blendEnabled != _last->blendEnabled || state.blendFactor != _last->blendFactor || state.blendFunc != _last->blendFunc || force) {
     Assert(Gu::context() != nullptr);
     // if (Gu.Context.Renderer != null && Gu.Context.Renderer.CurrentStage != null && Gu.Context.Renderer.CurrentStage.OutputFramebuffer != null) {
     if (state.blendEnabled) {
@@ -1597,7 +1611,7 @@ void Gpu::setState(const GpuRenderState& state, bool force) {
     }
   }
 
-  _last = state;
+  *(_last.get()) = state;
 }
 #pragma region Frustum
 Frustum::Frustum() {}
@@ -1717,29 +1731,18 @@ bool Frustum::hasBox(const box3& pCube) {
 #pragma endregion
 #pragma region Camera
 
-Camera::Camera(string_t&& name) : Bobj(std::move(name)), _gpudata(std::make_unique<GpuCamera>()), _buffer(std::make_unique<GpuBuffer>(sizeof(GpuCamera))) {
+Camera::Camera(string_t&& name) : Bobj(std::move(name)) {
   _computedViewport = std::make_unique<Viewport>();
   _frustum = std::make_unique<Frustum>();
 }
 void Camera::updateViewport(int width, int height) {
   _fov = glm::clamp(_fov, 0.1f, 179.9f);
-  _gpudata->_proj = glm::perspectiveFov(glm::radians(_fov), (float)width, (float)height, 1.0f, _far);
-  _buffer->copyToGpu(sizeof(GpuCamera), _gpudata.get());
+  _proj = glm::perspectiveFov(glm::radians(_fov), (float)width, (float)height, 1.0f, _far);
 }
-
-void Camera::update(float dt, mat4* parent) {
+void Camera::update(double dt, mat4* parent) {
   Bobj::update(dt, parent);
   _frustum->update(this);
-  _gpudata->_view = _world;
-}
-mat4& Camera::proj() {
-  return _gpudata->_proj;
-}
-mat4& Camera::view() {
-  return _gpudata->_view;
-}
-GpuBuffer* Camera::uniformBuffer() {
-  return _buffer.get();
+  _view = _world;
 }
 void Camera::computeView(RenderView* rv) {
   // todo: scale camera to dimensions of view with 'bars'
@@ -1759,7 +1762,19 @@ Bobj::Bobj(string_t&& name, b2_objdata* data) {
 Bobj::~Bobj() {
   // msg("destroying " + _name);
 }
-void Bobj::update(float dt, mat4* parent) {
+void Bobj::update(double dt, mat4* parent) {
+  // phy
+  if (Gu::fuzzyNotZero((double)glm::dot(_vel, _vel), FUZZY_ZERO_EPSILON * dt)) {
+    _pos += _vel * (float)dt;
+  }
+  else {
+    _vel = glm::vec3(0);
+  }
+
+  if (_onUpdate) {
+    _onUpdate(this, dt);
+  }
+
   // compile mat
   _world = parent ? *parent : mat4(1);
   _world = glm::scale(_world, _scl);
@@ -1792,13 +1807,17 @@ void Bobj::update(float dt, mat4* parent) {
     }
     Assert(fr != nullptr);
     auto texs = Gu::world()->bobjTexs();
-    float w = 1.0f / (float)texs[fr->_texid-1]._w; //note invalid - texid doe snot directly map
-    float h = 1.0f / (float)texs[fr->_texid-1]._h;
+    float w = 1.0f / (float)texs[fr->_texid - 1]._w;  // note invalid - texid doe snot directly map
+    float h = 1.0f / (float)texs[fr->_texid - 1]._h;
     _gpuObj._tex = fr->texpos();
     _gpuObj._tex.x *= w;
     _gpuObj._tex.y *= h;
     _gpuObj._tex.z *= w;
     _gpuObj._tex.w *= h;
+    _gpuObj._texid = fr->_texid - 1;
+  }
+  if (Gu::fuzzyNotZero(_gpuLight._radius)) {
+    _gpuLight._pos = _pos;
   }
 }
 void Bobj::calcBoundBox(box3* parent) {
@@ -1898,17 +1917,17 @@ void InputController::update(Bobj* obj, float delta) {
     auto dm = ct->input()->mouse() - ct->input()->mouseLast();
     float rotx_ang = glm::pi<float>() / (128.0f * 3.0f);
     float roty_ang = glm::pi<float>() / (128.0f * 3.0f);
-    if (glm::epsilonNotEqual(dm.y, 0.0f, cursor_sensitivity)) {
+    if (Gu::fuzzyNotZero(dm.y, cursor_sensitivity)) {
       obj->rot() = glm::rotate(obj->rot(), roty_ang * dm.y, obj->right());
     }
-    if (glm::epsilonNotEqual(dm.x, 0.0f, cursor_sensitivity)) {
+    if (Gu::fuzzyNotZero(dm.x, cursor_sensitivity)) {
       obj->rot() = glm::rotate(obj->rot(), -rotx_ang * dm.x, vec3(0, 1, 0));
       ;
     }
   }
 
   // strafe
-  float ang = (float)(M_PI * 2.0) * obj->rspeed() * delta;
+  float ang = (float)(M_PI * 2.0) * rspeed() * delta;
   float fmul = 1;
   float smul = 1;
   if (inp->pressOrDown(GLFW_KEY_LEFT_SHIFT) || inp->pressOrDown(GLFW_KEY_RIGHT_SHIFT)) {
@@ -1916,17 +1935,17 @@ void InputController::update(Bobj* obj, float delta) {
     smul = 3.0f;
   }
   if (inp->pressOrDown(GLFW_KEY_UP) || inp->pressOrDown(GLFW_KEY_W)) {
-    obj->pos() += obj->forward() * obj->speed() * fmul * delta;
+    obj->pos() += obj->forward() * speed() * fmul * delta;
   }
   if (inp->pressOrDown(GLFW_KEY_DOWN) || inp->pressOrDown(GLFW_KEY_S)) {
-    obj->pos() -= obj->forward() * obj->speed() * fmul * delta;
+    obj->pos() -= obj->forward() * speed() * fmul * delta;
   }
   if (inp->pressOrDown(GLFW_KEY_LEFT) || inp->pressOrDown(GLFW_KEY_A)) {
-    obj->pos() += obj->right() * obj->sspeed() * smul * delta;
+    obj->pos() += obj->right() * sspeed() * smul * delta;
     // obj->rot() = glm::rotate(obj->rot(), -ang, obj->up());
   }
   if (inp->pressOrDown(GLFW_KEY_RIGHT) || inp->pressOrDown(GLFW_KEY_D)) {
-    obj->pos() -= obj->right() * obj->sspeed() * smul * delta;
+    obj->pos() -= obj->right() * sspeed() * smul * delta;
     // obj->rot() = glm::rotate(obj->rot(), ang, obj->up());
   }
 
@@ -1944,6 +1963,8 @@ void InputController::update(Bobj* obj, float delta) {
 
 World::World() {
   Assert(Gu::context() != nullptr);
+
+  _time = std::make_unique<WorldTime>();
 
   auto normpath = Gu::relpath("../b26out/mt_normal_depth.png");
   auto colpath = Gu::relpath("../b26out/mt_color.png");
@@ -1972,21 +1993,49 @@ World::World() {
   _activeCamera = cam;
   _root->addChild(cam);
 
-  auto ret = std::make_shared<Bobj>("testobject", &_objdatas[0]);
-  _root->addChild(ret);
+  // test - objs
+  // test - objs
+  // test - objs
+  // test - objs
+  auto newob = std::make_shared<Bobj>("test_object", &_objdatas[0]);
+  _root->addChild(newob);
+
+  newob = std::make_shared<Bobj>("test_light");
+  newob->lightRadius() = 10;
+  newob->lightPower() = 0.75f;
+  newob->lightColor() = vec3(0.99124, 0.98315f, 0.71814);
+  newob->lightDir() = vec3(0, 0, 0);
+  newob->onUpdate() = [](auto bobj, auto dt) {
+    double r = 7.0;
+    double s = 3;
+    auto a = Gu::world()->time()->modSeconds(s) * glm::two_pi<double>();
+    bobj->pos().x = (float)(glm::cos(a) * r);
+    bobj->pos().y = 0;
+    bobj->pos().z = (float)(glm::sin(a) * r);
+  };
+  _root->addChild(newob);
+
+
+  newob = std::make_shared<Bobj>("test_light2");
+  newob->lightRadius() = 10;
+  newob->lightPower() = 0.75f;
+  newob->lightColor() = vec3(0.0099713, 0.0021412, 0.9414);
+  newob->lightDir() = vec3(0, 0, 0);
+  newob->onUpdate() = [](auto bobj, auto dt) {
+    double r = 5.0;
+    double s = 12;
+    auto a = Gu::world()->time()->modSeconds(s) * glm::two_pi<double>();
+    bobj->pos().x = (float)(glm::cos(a) * r);
+    bobj->pos().y = (float)(glm::sin(a) * r);
+    bobj->pos().z = 0;
+  };
+  _root->addChild(newob);
+
 
   _visibleStuff = std::make_unique<VisibleStuff>();
 }
-uptr<TextureArray> TextureArray::test() {
-  std::vector<uptr<Image>> images;
-  images.push_back(std::move(Image::from_file(Gu::relpath("../data/tex/Церковь Спаса на Крови.jpg").string())));
-  images.push_back(std::move(Image::from_file(Gu::relpath("../data/tex/stpeter.jpg").string())));
-  images.push_back(std::move(Image::from_file(Gu::relpath("../data/tex/дэвид.jpg").string())));
-  images.push_back(std::move(Image::from_file(Gu::relpath("../data/tex/Сикстинская капелла.jpg").string())));
-  TextureArray::conform(images);
-  return std::make_unique<TextureArray>(images, true);
-}
-void World::update(float dt) {
+void World::update() {
+  auto dt = _time->update();
   Assert(_root != nullptr);
   _root->update(dt);
 }
@@ -2138,6 +2187,9 @@ void Window::init(int w, int h, std::string title, GLFWwindow* share) {
   _width = w;
   _height = h;
 
+  if (Gu::isDebug()) {
+    glfwWindowHint(GLFW_OPENGL_DEBUG_CONTEXT, true);
+  }
   glfwWindowHint(GLFW_RED_BITS, 8);
   glfwWindowHint(GLFW_GREEN_BITS, 8);
   glfwWindowHint(GLFW_BLUE_BITS, 8);
@@ -2261,8 +2313,96 @@ void Window::initEngine() {
   glFrontFace(GL_CCW);
   glEnable(GL_BLEND);
   glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
-  glEnable(GL_DEBUG_OUTPUT);
-  glEnable(GL_DEBUG_OUTPUT_SYNCHRONOUS);
+  if (Gu::glGetInteger(GL_CONTEXT_FLAGS) & GL_CONTEXT_FLAG_DEBUG_BIT) {
+    glEnable(GL_DEBUG_OUTPUT);
+    glEnable(GL_DEBUG_OUTPUT_SYNCHRONOUS);
+    glDebugMessageCallback(
+        [](GLenum source, GLenum type, unsigned int id, GLenum severity, GLsizei length, const char* message, const void* userParam) {
+          // ignore non-significant error/warning codes
+          if (id == 131169 || id == 131185 || id == 131218 || id == 131204) {
+            return;
+          }
+          str st = "";
+
+          st += "---------------\n";
+          st += str("") + "Debug message (" + id + "): \n";
+
+          switch (source) {
+            case GL_DEBUG_SOURCE_API:
+              st += "Source: API";
+              break;
+            case GL_DEBUG_SOURCE_WINDOW_SYSTEM:
+              st += "Source: Window System";
+              break;
+            case GL_DEBUG_SOURCE_SHADER_COMPILER:
+              st += "Source: Shader Compiler";
+              break;
+            case GL_DEBUG_SOURCE_THIRD_PARTY:
+              st += "Source: Third Party";
+              break;
+            case GL_DEBUG_SOURCE_APPLICATION:
+              st += "Source: Application";
+              break;
+            case GL_DEBUG_SOURCE_OTHER:
+              st += "Source: Other";
+              break;
+          }
+          st += "\n";
+
+          switch (type) {
+            case GL_DEBUG_TYPE_ERROR:
+              st += "Type: Error";
+              break;
+            case GL_DEBUG_TYPE_DEPRECATED_BEHAVIOR:
+              st += "Type: Deprecated Behaviour";
+              break;
+            case GL_DEBUG_TYPE_UNDEFINED_BEHAVIOR:
+              st += "Type: Undefined Behaviour";
+              break;
+            case GL_DEBUG_TYPE_PORTABILITY:
+              st += "Type: Portability";
+              break;
+            case GL_DEBUG_TYPE_PERFORMANCE:
+              st += "Type: Performance";
+              break;
+            case GL_DEBUG_TYPE_MARKER:
+              st += "Type: Marker";
+              break;
+            case GL_DEBUG_TYPE_PUSH_GROUP:
+              st += "Type: Push Group";
+              break;
+            case GL_DEBUG_TYPE_POP_GROUP:
+              st += "Type: Pop Group";
+              break;
+            case GL_DEBUG_TYPE_OTHER:
+              st += "Type: Other";
+              break;
+          }
+          st += "\n";
+
+          switch (severity) {
+            case GL_DEBUG_SEVERITY_HIGH:
+              st += "Severity: high";
+              break;
+            case GL_DEBUG_SEVERITY_MEDIUM:
+              st += "Severity: medium";
+              break;
+            case GL_DEBUG_SEVERITY_LOW:
+              st += "Severity: low";
+              break;
+            case GL_DEBUG_SEVERITY_NOTIFICATION:
+              st += "Severity: notification";
+              break;
+          }
+          st += "\n";
+          st += str(message, length);
+          st += "\n";
+          LogError(st);
+        },
+        nullptr);
+    glDebugMessageControl(GL_DONT_CARE, GL_DONT_CARE, GL_DONT_CARE, 0, nullptr, GL_TRUE);
+  }
+
   glClearColor(0.89, 0.91, 0.91, 1.0);
   CheckErrorsDbg();
 
@@ -2305,7 +2445,11 @@ void Window::initEngine() {
   // ob._texid = 3;
   // _objs.push_back(ob);
 
-  _objBuf = std::make_unique<GpuBuffer>(sizeof(GpuObj) * _objs.size(), _objs.data());
+  _objBuf = std::make_unique<GpuArray<GpuObj>>();
+  _lightBuf = std::make_unique<GpuArray<GpuLight>>();
+  _worldBuf = std::make_unique<GpuArray<GpuWorld>>(1);
+  _camBuf = std::make_unique<GpuArray<GpuCamera>>(1);
+
   _objVao = std::make_unique<VertexArray>();
 
   glfwGetWindowPos(_window, &_lastx, &_lasty);
@@ -2386,8 +2530,6 @@ void Window::renderViews() {
   else {
     glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
 
-    // TODO: views + cameras.
-
     auto cam = Gu::world()->activeCamera();
 
     cam->updateViewport(_width, _height);  //_proj shouldbe on the window
@@ -2395,24 +2537,50 @@ void Window::renderViews() {
     // draw quads test
     _drawQuads->draw(cam.get(), _testTex.get());
 
-    _objs.clear();
-    for (auto& c : Gu::world()->root()->children()) {
-      if (c->visible() && c->isBobj()) {
-        _objs.push_back(c->gpuObj());
+    auto test = sizeof(GpuWorld);  // Test - make sure its padded to 16 bytes
+
+    // test
+    // test
+    // test
+    // test
+    std::vector<GpuLight> lights;
+    std::vector<GpuObj> objs;
+    for (auto& ch : Gu::world()->root()->children()) {
+      if (ch->visible() && ch->isBobj()) {
+        objs.push_back(ch->gpuObj());
+      }
+      if (Gu::fuzzyNotZero(ch->lightRadius())) {
+        lights.push_back(ch->gpuLight());
       }
     }
-    _objBuf->copyToGpu(sizeof(GpuObj) * _objs.size(), _objs.data());
+    _objBuf->copyToGpu(objs);
+    _lightBuf->copyToGpu(lights);
 
-    // this is going away we're going to 'collect bobjs'
-    //  objs test
-    _objShader->bind();
-    _objShader->setCameraUfs(cam.get());
+    GpuCamera gcam;
+    gcam._proj = cam->proj();
+    gcam._view = cam->view();
+    gcam._viewPos = cam->pos();
+    gcam._windowWidth = width();
+    gcam._viewDir = cam->forward();
+    gcam._windowHeight = height();
+    _camBuf->copyToGpu(gcam);
+
+    GpuWorld gworld;
+    gworld._lightCount = lights.size();
+    gworld._zrange = 1.0f;
+    gworld._ambient = vec4(1, 1, 1, 0.1f);
+    _worldBuf->copyToGpu(gworld);
+
+    _objShader->beginRender();
     _objShader->setTextureUf(Gu::world()->objtexs(), 0, "_textures");
-    _objShader->bindSSBBlock("_ufGpuObj_Block", _objBuf.get());
+    _objShader->bindBlock("_ufGpuCamera_Block", dynamic_cast<GpuBuffer*>(_camBuf.get()));
+    _objShader->bindBlock("_ufGpuWorld_Block", dynamic_cast<GpuBuffer*>(_worldBuf.get()));
+    _objShader->bindBlock("_ufGpuObj_Block", dynamic_cast<GpuBuffer*>(_objBuf.get()));
+    _objShader->bindBlock("_ufGpuLight_Block", dynamic_cast<GpuBuffer*>(_lightBuf.get()));
     _objVao->bind();
-    glDrawArrays(GL_POINTS, 0, _objs.size());
+    glDrawArrays(GL_POINTS, 0, objs.size());
     _objVao->unbind();
-    _objShader->unbind();
+    _objShader->endRender();
   }
 
   CheckErrorsRt();

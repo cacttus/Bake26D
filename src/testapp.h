@@ -224,7 +224,6 @@ public:
     _what = what;
   }
 };
-
 class Log {
 private:
   static void _output(std::string color, bool bold, std::string type, const char* file, int line, std::string s);
@@ -251,7 +250,6 @@ public:
   static std::string cc_reset();
   static std::string cc_color(std::string color, bool bold);
 };
-
 class Gu {
   static path_t _appPath;
   static path_t _assetsPath;
@@ -265,6 +263,7 @@ class Gu {
   static std::unordered_map<std::string, sptr<Material>> _materials;
 
 public:
+  static bool isDebug();
   static World* world() { return _world.get(); }
   static AppConfig* config() { return _appConfig.get(); }
   inline static void trap() {}
@@ -297,8 +296,9 @@ public:
   static vec4 rgb_ub(uint hex);
   static vec4 rgb_ub(uint8_t r, uint8_t g, uint8_t b);
   static sptr<Material> findMaterial(const string_t& name);
+  static bool fuzzyNotZero(float val, float ep = FUZZY_ZERO_EPSILON) { return glm::epsilonNotEqual(val, 0.0f, ep); }
+  static bool fuzzyNotZero(double val, double ep = FUZZY_ZERO_EPSILON) { return glm::epsilonNotEqual(val, 0.0, ep); }
 };
-
 class ImageFormat {
 private:
   ImageFormatType _format;
@@ -322,7 +322,6 @@ public:
     _bpp = bpp;
   }
 };
-
 class Image {
 private:
   int _width = 0;
@@ -347,7 +346,6 @@ public:
   static void copy(Image* dst, const box2i& dstbox, Image* src, const box2i& srcbox);
   static uptr<Image> scale(Image* img, float s, ImageFormat* changefmt = nullptr);
 };
-
 class GLObject {
 protected:
   GLuint _glId;
@@ -355,7 +353,6 @@ protected:
 public:
   GLuint glId() { return _glId; }
 };
-
 class TextureBase : public GLObject {
 public:
 protected:
@@ -371,9 +368,9 @@ protected:
 public:
   TextureBase(int w, int h, ImageFormat* format, bool mipmaps, GLenum type);
   ~TextureBase();
-
-  void bind(int32_t channel);
-  void unbind(int32_t channel);
+  //
+  //   void bind(int32_t channel);
+  //   void unbind(int32_t channel);
 };
 class Texture : public TextureBase {
 public:
@@ -424,57 +421,58 @@ public:
     std::vector<std::string> _structs;
     ShaderMeta();
   };
-  class Uniform {
+  class ShaderVar {
   public:
     std::string _name = "";
-    int _location = -1;
-    int _sizeBytes = 0;
-    bool _active = false;
-    GLenum _type;
+    int _size = 0;
     bool _hasBeenBound = false;
+    ShaderVar(const str& name, size_t size) {
+      _name = name;
+      _size = size;
+    }
+    virtual ~ShaderVar() {}
+  };
+  class Uniform : public ShaderVar {
+  public:
+    GLuint _location = 0;
+    GLenum _type;
     GLenum _rangeTarget;
     GLenum _bufferTarget;
-    Uniform(std::string name, int location, int size, GLenum type, bool active) {
-      _name = name;
+    Uniform(std::string name, GLuint location, size_t size, GLenum type) : ShaderVar(name, size) {
       _location = location;
-      _sizeBytes = size;
       _type = type;
-      _active = active;
     }
+    virtual ~Uniform() override {}
   };
-  class BufferBlock {  // UniformBlock, ShaderStorageBlock
+  class BufferBlock : public ShaderVar {  // UniformBlock, ShaderStorageBlock
   public:
-    std::string _name = "";
-    int _bindingIndex = -1;
-    int _bufferSizeBytes = 0;
-    bool _active = false;
-    bool _hasBeenBound = false;
+    GLuint _blockIndex = -1;
+    GLuint _bindingPoint = -1;
     GLenum _buftype;
-    BufferBlock(std::string name, int bind, int size, bool active, GLenum buftype) {
-      _name = name;
+    BufferBlock(std::string name, int blockindex, int bindpoint, size_t size, GLenum buftype) : ShaderVar(name, size) {
       _buftype = buftype;
-      _bindingIndex = bind;
-      _bufferSizeBytes = size;
-      _active = active;
+      _bindingPoint = bindpoint;
+      _blockIndex = blockindex;
     }
+    virtual ~BufferBlock() override {}
   };
 
 private:
   static uptr<ShaderMeta> _meta;
 
-  // std::map<std::string, int> _buffer_bindings;
-
   std::vector<std::string> _vert_src;
   std::vector<std::string> _frag_src;
   std::vector<std::string> _geom_src;
 
-  std::vector<uptr<BufferBlock>> _uniformBlocks;
-  std::vector<uptr<Uniform>> _uniforms;
-  std::vector<uptr<BufferBlock>> _ssbos;
+  std::unordered_map<std::string, uptr<ShaderVar>> _vars;
+  // std::vector<uptr<BufferBlock>> _blocks;
+  // std::vector<uptr<Uniform>> _uniforms;
 
   std::string _name;
   ShaderLoadState _state = ShaderLoadState::None;
-  int _maxBufferBindingIndex = 0;
+  GLuint _nextBufferBindingIndex = 0;
+
+  ShaderVar* getVar(const str& name);
   void parseUniformBlocks();
   void parseUniforms();
   void parseSSBOs();
@@ -485,24 +483,48 @@ private:
   static std::string getProgramInfoLog(GLuint prog);
   static void printSrc(std::vector<std::string> src);
   static std::string debugFormatSrc(std::vector<std::string> src);
+  void checkDupeBindings();
+  void setTextureUf(GLuint glid, GLuint channel, string_t loc);
 
 public:
-  void bindBlockFast(BufferBlock*, GpuBuffer*);
-  void bindSSBBlock(const string_t&& name, GpuBuffer*);
-  int maxBufferBindingIndex() { return _maxBufferBindingIndex; }
-  void setCameraUfs(Camera* cam);
+  Shader(path_t vert_src, path_t geom_src, path_t frag_src);
+  ~Shader();
+  void bindBlock(BufferBlock*, GpuBuffer*);
+  void bindBlock(const string_t&& name, GpuBuffer*);
   void setTextureUf(Texture* tex, GLuint index, string_t loc);
   void setTextureUf(TextureArray* tex, GLuint index, string_t loc);
   void bind();
   void unbind();
-  Shader(path_t vert_src, path_t geom_src, path_t frag_src);
-  ~Shader();
+  void beginRender();
+  void endRender();
 };
 class GpuBuffer : public GLObject {
 public:
-  GpuBuffer(size_t size, void* data = nullptr, uint32_t flags = GL_DYNAMIC_DRAW);
+  GpuBuffer();
+  GpuBuffer(size_t size, const void* data = nullptr, uint32_t flags = GL_DYNAMIC_DRAW);
   virtual ~GpuBuffer();
-  void copyToGpu(size_t size, void* data, size_t offset = 0);
+  void copyToGpu(size_t size, const void* data, size_t offset = 0);
+};
+template <typename Tx>
+class GpuArray : public GpuBuffer {
+  size_t _count = 0;
+  // GLuint _bindPoint = 0;
+  // index 0-1024= system, 1024+.. but most will be sytem
+public:
+  size_t count() { return _count; }
+
+  GpuArray(size_t count = 0) : GpuBuffer() {
+    // note: count==0 => no size limit
+    _count = count;
+  }
+  void copyToGpu(const std::vector<Tx>& pt) {
+    Assert((_count == 0) || (_count > 0 && (pt.size() <= _count)));
+    if (pt.size() == 0) {
+      return;
+    }
+    GpuBuffer::copyToGpu(sizeof(Tx) * pt.size(), pt.data(), 0);
+  }
+  void copyToGpu(const Tx& pt) { GpuBuffer::copyToGpu(sizeof(Tx), &pt, 0); }
 };
 class VertexArray : public GLObject {
 public:
@@ -524,6 +546,74 @@ class VertexFormat {
 
 public:
   void comp() {}
+};
+class Gpu {
+public:
+private:
+  uptr<GpuRenderState> _last;
+  int _maxTextureSize = 0;
+  int _maxFragmentTextureImageUnits = 0;
+  int _maxVertexTextureImageUnits = 0;
+
+public:
+  Gpu();
+  int maxTextureSize() { return _maxTextureSize; }
+  int maxFragmentTextureImageUnits() { return _maxFragmentTextureImageUnits; }
+  int maxVertexTextureImageUnits() { return _maxVertexTextureImageUnits; }
+
+  void setState(const GpuRenderState& rs, bool force = false);
+};
+class PipelineStage {
+  int _width;
+  int _height;
+
+public:
+  int width() { return _width; }
+  int height() { return _height; }
+  bool beginRender(bool forceclear);
+  void endRender();
+};
+class Renderer {
+  std::vector<uptr<PipelineStage>> _pipelineStages;
+  PipelineStage* _currentStage = nullptr;
+  RenderView* _currentView = nullptr;
+  bool beginRenderToView(RenderView* rv);
+  void endRenderToView(RenderView* rv);
+
+public:
+  void beginRenderToWindow();
+  void renderViewToWindow(RenderView* rv);
+  void endRenderToWindow();
+};
+class Picker {
+public:
+  void updatePickedPixel() {}
+};
+class RenderView {
+private:
+  vec2 _uv0;
+  vec2 _uv1;
+  string_t _name;
+  uptr<Viewport> _viewport;
+  sptr<Camera> _camera;
+  uptr<Overlay> _overlay;
+  bool _enabled = true;
+  void syncCamera();
+  Viewport* getClipViewport();
+
+public:
+  sptr<Camera> camera() { return _camera; }
+  Viewport* viewport() { return _viewport.get(); }
+  Overlay* overlay() { return _overlay.get(); }
+  bool enabled() { return _enabled; }
+
+  RenderView(string_t name, vec2 uv0, vec2 uv1, int sw, int sh);
+  void setSize(vec2 uv0, vec2 uv1, int sw, int sh);
+  void onResize(int sw, int sh);
+  void updateDimensions(int cur_output_fbo_w, int cur_output_fbo_h);
+  box2i computeScaledView(vec2 uv0, vec2 uv1, int width, int height);
+  bool beginPipelineStage(PipelineStage* ps);
+  void endPipelineStage(PipelineStage* ps);
 };
 class ContextObject {
 public:
@@ -605,16 +695,17 @@ public:
   bool pressOrDown(int key);
   bool press(int key);
 };
-
 class Bobj : public VirtualMemoryShared<Bobj> {
+public:
+  typedef std::function<void(Bobj* ob, double dt)> OnUpdateFunc;
+
+private:
   uint64_t _id = 0;
   string_t _name = "";
 
 protected:
   bool _visible = true;
-  float _speed = 10;
-  float _sspeed = 6;
-  float _rspeed = 0.5f;
+
   vec3 _pos = vec3(0, 0, 0);
   quat _rot = quat(0, 0, 0, 1);
   vec3 _scl = vec3(1, 1, 1);
@@ -634,8 +725,9 @@ protected:
   box3 _boundBoxMeshAA;
   oobox3 _boundBoxMeshOO;
   GpuObj _gpuObj;
-  // vec3 _vel = vec3(0, 0, 0);//later
-  // vec3 _avel = vec3(0, 0, 0);
+  GpuLight _gpuLight;
+  vec3 _vel = vec3(0, 0, 0);
+  OnUpdateFunc _onUpdate;
 
   void calcBoundBox(box3* parent);
   void volumizeBoundBox(box3& b);
@@ -644,9 +736,10 @@ public:
   uint64_t id() { return _id; }
   string_t& name() { return _name; }
 
-  bool isBobj() { return _data!=nullptr;}
+  bool isBobj() { return _data != nullptr; }
 
   bool& visible() { return _visible; }
+  OnUpdateFunc& onUpdate() { return _onUpdate; }
 
   b2_action*& action() { return _action; }
   b2_frame* frame() { return _frame; }
@@ -656,15 +749,19 @@ public:
   vec3& scl() { return _scl; }
   mat4& world() { return _world; }
   vec3 world_pos() { return glm::vec3(_world[3]); }
-  GpuObj& gpuObj() { return _gpuObj; }
 
   vec3& up() { return _up; }
   vec3& right() { return _right; }
   vec3& forward() { return _forward; }
 
-  float& speed() { return _speed; }
-  float& rspeed() { return _rspeed; }
-  float& sspeed() { return _sspeed; }
+  box3& boundBox() { return _boundBox; }
+
+  vec3& lightColor() { return _gpuLight._color; }
+  float& lightPower() { return _gpuLight._power; }
+  float& lightRadius() { return _gpuLight._radius; }
+  vec3& lightDir() { return _gpuLight._dir; }
+
+  vec3& vel() { return _vel; }
 
   sptr<Mesh> mesh() { return _mesh; }
   sptr<Material> material() { return _material; }
@@ -673,11 +770,12 @@ public:
   const std::vector<sptr<Bobj>>& children() { return _children; }
   std::vector<uptr<Component>>& components() { return _components; }
 
-  box3& boundBox() { return _boundBox; }
+  GpuLight& gpuLight() { return _gpuLight; }
+  GpuObj& gpuObj() { return _gpuObj; }
 
   Bobj(string_t&& name, b2_objdata* data = nullptr);
   virtual ~Bobj();
-  virtual void update(float dt, mat4* parent = nullptr);
+  virtual void update(double dt, mat4* parent = nullptr);
   void addChild(sptr<Bobj> ob);
   // uptr<Bobj> removeChild(uptr<Bobj* ob);
   void lookAt(const vec3&& at);
@@ -731,8 +829,8 @@ class Camera : public Bobj {
   float _fov = 40.0f;
   float _far = 1000.0f;
   float _near = 1.0f;
-  uptr<GpuCamera> _gpudata;
-  uptr<GpuBuffer> _buffer;
+  mat4 _proj;
+  mat4 _view;
   uptr<Viewport> _computedViewport;
   uptr<Frustum> _frustum;
 
@@ -740,18 +838,16 @@ public:
   float& fov() { return _fov; }
   float& near() { return _near; }
   float& far() { return _far; }
-  mat4& proj();
-  mat4& view();
+  mat4& proj() { return _proj; }
+  mat4& view() { return _view; }
   Frustum* frustum() { return _frustum.get(); }
   Viewport* viewport() { return _computedViewport.get(); }
-  GpuBuffer* uniformBuffer();
 
   Camera(string_t&& name);
   void updateViewport(int width, int height);
-  virtual void update(float dt, mat4* parent = nullptr) override;
+  virtual void update(double dt, mat4* parent = nullptr) override;
   void computeView(RenderView* rv);
 };
-
 class GpuRenderState {
 public:
   // State switches to prevent unnecessary gpu context changes.
@@ -765,81 +861,49 @@ public:
   bool depthMask = true;                        // enable writing to depth bufer
   GLenum cullFaceMode = GL_BACK;                // CullFaceMode _cullFaceMode = CullFaceMode.Back;
 };
-class Gpu {
-public:
-private:
-  GpuRenderState _last;
-  int _maxTextureSize = 0;
-  int _maxFragmentTextureImageUnits = 0;
-  int _maxVertexTextureImageUnits = 0;
-
-public:
-  int maxTextureSize() { return _maxTextureSize; }
-  int maxFragmentTextureImageUnits() { return _maxFragmentTextureImageUnits; }
-  int maxVertexTextureImageUnits() { return _maxVertexTextureImageUnits; }
-
-  void setState(const GpuRenderState& rs, bool force = false);
-};
-class PipelineStage {
-  int _width;
-  int _height;
-
-public:
-  int width() { return _width; }
-  int height() { return _height; }
-  bool beginRender(bool forceclear);
-  void endRender();
-};
-class Renderer {
-  std::vector<uptr<PipelineStage>> _pipelineStages;
-  PipelineStage* _currentStage = nullptr;
-  RenderView* _currentView = nullptr;
-  bool beginRenderToView(RenderView* rv);
-  void endRenderToView(RenderView* rv);
-
-public:
-  void beginRenderToWindow();
-  void renderViewToWindow(RenderView* rv);
-  void endRenderToWindow();
-};
-class Picker {
-public:
-  void updatePickedPixel() {}
-};
-class RenderView {
-private:
-  vec2 _uv0;
-  vec2 _uv1;
-  string_t _name;
-  uptr<Viewport> _viewport;
-  sptr<Camera> _camera;
-  uptr<Overlay> _overlay;
-  bool _enabled = true;
-  void syncCamera();
-  Viewport* getClipViewport();
-
-public:
-  sptr<Camera> camera() { return _camera; }
-  Viewport* viewport() { return _viewport.get(); }
-  Overlay* overlay() { return _overlay.get(); }
-  bool enabled() { return _enabled; }
-
-  RenderView(string_t name, vec2 uv0, vec2 uv1, int sw, int sh);
-  void setSize(vec2 uv0, vec2 uv1, int sw, int sh);
-  void onResize(int sw, int sh);
-  void updateDimensions(int cur_output_fbo_w, int cur_output_fbo_h);
-  box2i computeScaledView(vec2 uv0, vec2 uv1, int width, int height);
-  bool beginPipelineStage(PipelineStage* ps);
-  void endPipelineStage(PipelineStage* ps);
-};
 class Component {
 public:
   virtual void update(Bobj* obj, float dt) {}
 };
 class InputController : public Component {
+  float _speed = 10;
+  float _sspeed = 6;
+  float _rspeed = 0.5f;
+
 public:
+  float& speed() { return _speed; }
+  float& rspeed() { return _rspeed; }
+  float& sspeed() { return _sspeed; }
+
   InputController();
   virtual void update(Bobj* obj, float dt) override;
+};
+class WorldTime {
+private:
+  double _start = 0;
+  double _last = 0;
+  double _delta = 0;
+
+public:
+  double elapsed() { return glfwGetTime() - _start; }
+  double delta() { return _delta; }
+  double modSeconds(double seconds){ return fmod(elapsed(), seconds) / seconds; }
+  WorldTime() {
+    _start = _last = glfwGetTime();
+    update();
+  }
+  double update() {
+    auto cur = glfwGetTime();
+    _delta = (float)(cur - _last);
+    _last = cur;
+
+    double LIMIT_DELTA = 1.0;
+    if (_delta > LIMIT_DELTA) {
+      LogWarn("Delta " + _delta + " > " + LIMIT_DELTA + ". (possibly paused in debug mode)");
+      _delta = LIMIT_DELTA;
+    }
+    return _delta;
+  }
 };
 class World {
   const int c_MetaFileVersionMajor = 0;
@@ -851,6 +915,7 @@ class World {
   sptr<Bobj> _root;
   sptr<Camera> _activeCamera;
   uptr<VisibleStuff> _visibleStuff;
+  uptr<WorldTime> _time;
 
   void loadD26Meta(path_t);
 
@@ -859,10 +924,11 @@ public:
   TextureArray* objtexs() { return _objtexs.get(); }
   sptr<Camera> activeCamera() { return _activeCamera; }
   VisibleStuff* visibleStuff() { return _visibleStuff.get(); }
-  std::vector<b2_mtex>& bobjTexs(){return _mtexs;}
+  std::vector<b2_mtex>& bobjTexs() { return _mtexs; }
+  WorldTime* time() { return _time.get(); }
 
   World();
-  void update(float dt);
+  void update();
   void cull(RenderView* rv, Bobj* ob = nullptr);
   uptr<Bobj> createOb(const string_t& name, b2_objdata* dat);
   void pick();
@@ -882,7 +948,6 @@ public:
     f->second.insert(ob);
   }
 };
-
 class Window {
 public:
   enum class WindowState { Created, Running, Quit };
@@ -897,9 +962,11 @@ private:
   uptr<Input> _input;
   uptr<DrawQuads> _drawQuads;
   std::vector<uptr<RenderView>> _views;
-  std::vector<GpuObj> _objs;
   uptr<Shader> _objShader;
-  uptr<GpuBuffer> _objBuf;
+  uptr<GpuArray<GpuObj>> _objBuf;
+  uptr<GpuArray<GpuLight>> _lightBuf;
+  uptr<GpuArray<GpuWorld>> _worldBuf;
+  uptr<GpuArray<GpuCamera>> _camBuf;
   uptr<VertexArray> _objVao;
   uptr<Texture> _testTex;
   uptr<Renderer> _renderer;
@@ -943,11 +1010,11 @@ public:
   void on_resize(int w, int h);
   void quit_everything();
 };
-
 class AppConfig {
 public:
+  bool EnableDebug = true;  // enables debugging
   bool BreakOnGLError = true;
-  bool Debug_Print_Shader_Uniform_Details_Verbose_NotFound = true;
+  bool Debug_Print_Shader_Details_Verbose = true;
 };
 
 #pragma endregion
@@ -958,7 +1025,7 @@ public:
   int32_t _id = -1;
   std::string _name = "";
   std::vector<b2_action> _actions;
-  
+
   std::vector<b2_action>& actions() { return _actions; }
   void deserialize(BinaryFile* bf);
 };
@@ -981,7 +1048,7 @@ public:
   int32_t _w = -1;
   int32_t _h = -1;
 
-  vec4 texpos ()const {return vec4(_x,_y,_w,_h);}
+  vec4 texpos() const { return vec4(_x, _y, _w, _h); }
 
   void deserialize(BinaryFile* bf);
 };

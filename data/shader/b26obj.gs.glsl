@@ -6,9 +6,11 @@ in uint _objIDVS[];
 out vec3 _vertGS;
 out vec2 _texGS;
 flat out uint _texidGS;
+flat out uint _objIDGS;
 
 void setGS() {
   _texidGS = _ufGpuObj[_objIDVS[0]]._texid;
+  _objIDGS = _objIDVS[0];
 }
 void main() {
 
