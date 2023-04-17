@@ -12,6 +12,6 @@ out vec4 _color;
 void main() {
   _tcoord = _x2;
   _color = _c4;
-  vec4 vert = _ufGpuCamera._proj* _ufGpuCamera._view*  vec4(_v3, 1);
+  vec4 vert = _ufGpuViewData._proj* _ufGpuViewData._view*  vec4(_v3, 1);
   gl_Position = vert;
 }

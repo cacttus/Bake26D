@@ -324,6 +324,7 @@ public:
 };
 class Image {
 private:
+  str _name = "";
   int _width = 0;
   int _height = 0;
   ImageFormat* _format;
@@ -335,6 +336,7 @@ public:
   int height() const { return _height; }
   ImageFormat* format() const { return _format; }
   char* data() { return _data.get(); }
+  str name() { return _name; }
 
   Image(int w, int h, ImageFormat* fmt, const char* data = nullptr);
   virtual ~Image();
@@ -525,6 +527,10 @@ public:
     GpuBuffer::copyToGpu(sizeof(Tx) * pt.size(), pt.data(), 0);
   }
   void copyToGpu(const Tx& pt) { GpuBuffer::copyToGpu(sizeof(Tx), &pt, 0); }
+  void copyToGpu(const Tx* pt) {
+    Assert(pt);
+    GpuBuffer::copyToGpu(sizeof(Tx), pt, 0);
+  }
 };
 class VertexArray : public GLObject {
 public:
@@ -887,7 +893,7 @@ private:
 public:
   double elapsed() { return glfwGetTime() - _start; }
   double delta() { return _delta; }
-  double modSeconds(double seconds){ return fmod(elapsed(), seconds) / seconds; }
+  double modSeconds(double seconds) { return fmod(elapsed(), seconds) / seconds; }
   WorldTime() {
     _start = _last = glfwGetTime();
     update();
@@ -916,6 +922,7 @@ class World {
   sptr<Camera> _activeCamera;
   uptr<VisibleStuff> _visibleStuff;
   uptr<WorldTime> _time;
+  uptr<GpuWorld> _gpuWorld;
 
   void loadD26Meta(path_t);
 
@@ -926,6 +933,7 @@ public:
   VisibleStuff* visibleStuff() { return _visibleStuff.get(); }
   std::vector<b2_mtex>& bobjTexs() { return _mtexs; }
   WorldTime* time() { return _time.get(); }
+  GpuWorld* gpuWorld() { return _gpuWorld.get(); }
 
   World();
   void update();
@@ -966,7 +974,7 @@ private:
   uptr<GpuArray<GpuObj>> _objBuf;
   uptr<GpuArray<GpuLight>> _lightBuf;
   uptr<GpuArray<GpuWorld>> _worldBuf;
-  uptr<GpuArray<GpuCamera>> _camBuf;
+  uptr<GpuArray<GpuViewData>> _dataBuf;
   uptr<VertexArray> _objVao;
   uptr<Texture> _testTex;
   uptr<Renderer> _renderer;
@@ -1042,7 +1050,7 @@ class b2_frame {
 public:
   float _seq = -1;
   std::string _name = "";
-  int32_t _texid = -1;
+  int32_t _mtexid = -1;
   int32_t _x = -1;
   int32_t _y = -1;
   int32_t _w = -1;

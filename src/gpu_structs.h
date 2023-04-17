@@ -8,7 +8,7 @@ namespace B26D {
 
 SHADER_SHARED
 
-GPU_STRUCT GpuCamera {
+GPU_STRUCT GpuViewData {
   mat4 _proj;
   mat4 _view;
 
@@ -17,6 +17,11 @@ GPU_STRUCT GpuCamera {
 
   vec3 _viewDir;
   float _windowHeight;
+
+  uint _lightCount;
+  float dummy0;
+  float dummy1;
+  float dummy2;
 
 //   vec4 _vWindowViewport;
 // 
@@ -32,8 +37,10 @@ GPU_STRUCT GpuCamera {
 };
 GPU_STRUCT GpuObj {
   mat4 _mat;
+  
   vec4 _tex;  // x,y,w,h
-  int _texid;
+  
+  int _mtexid;
   int _dummy0;
   int _dummy1;
   int _dummy2;
@@ -41,16 +48,21 @@ GPU_STRUCT GpuObj {
 GPU_STRUCT GpuLight {
   vec3 _color;
   float _power;
+
   vec3 _pos;
   float _radius;
+
   vec3 _dir;
   float _pad0;
 };
 GPU_STRUCT GpuWorld {
-  uint _lightCount;
   float _zrange;
-  float dummy0;
-  float dummy1;
+  int _mtex_layers;
+  int _mtex_color;
+  int _mtex_depthnormal;
+  int _mtex_w;
+  int _mtex_h;
+
   vec4 _ambient;
 };
 

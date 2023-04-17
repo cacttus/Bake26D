@@ -5,12 +5,15 @@ in uint _objIDVS[];
 
 out vec3 _vertGS;
 out vec2 _texGS;
-flat out uint _texidGS;
+flat out uint _mtexidGS;
 flat out uint _objIDGS;
+flat out float _objScaleZGS;
 
 void setGS() {
-  _texidGS = _ufGpuObj[_objIDVS[0]]._texid;
   _objIDGS = _objIDVS[0];
+  _mtexidGS = _ufGpuObj[_objIDVS[0]]._mtexid;
+  mat4 tm = _ufGpuObj[_objIDVS[0]]._mat;
+  _objScaleZGS = length(vec3(tm[3][1], tm[3][2], tm[3][3]));
 }
 void main() {
 
@@ -25,7 +28,7 @@ void main() {
       0 ----------------1
   x,y                   
   */
-  mat4 viewproj = _ufGpuCamera._proj * _ufGpuCamera._view;
+  mat4 viewproj = _ufGpuViewData._proj * _ufGpuViewData._view;
   
   mat4 wmat = _ufGpuObj[_objIDVS[0]]._mat;
   vec4 tex = _ufGpuObj[_objIDVS[0]]._tex;

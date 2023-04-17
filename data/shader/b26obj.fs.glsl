@@ -5,8 +5,9 @@ uniform sampler2DArray  _textures;
 
 in vec3 _vertGS;
 in vec2 _texGS;
-flat in uint _texidGS;
+flat in uint _mtexidGS;
 flat in uint _objIDGS;
+flat in float _objScaleZGS;
 
 out vec4 _output;
 
@@ -28,11 +29,11 @@ vec3 doBlinnPhong(in vec3 in_vertex, in vec3 in_albedo, in vec3 light_vector, in
 }
 vec3 lightFragmentBlinnPhong(in vec3 in_vertex, in vec3 in_albedo, in vec3 in_normal, vec4 spec_color) {
   
-  vec3 eye_vector = normalize(_ufGpuCamera._viewPos - in_vertex);
+  vec3 eye_vector = normalize(_ufGpuViewData._viewPos - in_vertex);
 
   vec3 finalColor = vec3(0,0,0);
 
-  for(int iLight = 0; iLight <  _ufGpuWorld._lightCount; iLight++) 
+  for(int iLight = 0; iLight <  _ufGpuViewData._lightCount; iLight++) 
   {
     vec3 vLightPos = _ufGpuLight[iLight]._pos;
     vec3 vLightColor =  _ufGpuLight[iLight]._color;
@@ -59,14 +60,16 @@ vec3 lightFragmentBlinnPhong(in vec3 in_vertex, in vec3 in_albedo, in vec3 in_no
   return finalColor;
 }
 
-
 void main() {
-  vec4 col = texture(_textures, vec3(_texGS, _texidGS + 1)); //  
-  vec4 nd = texture(_textures, vec3(_texGS,  _texidGS + 0)); //  
+  uint layers = 2;
+
+  vec4 col = texture(_textures, vec3(_texGS, _mtexidGS * _ufGpuWorld._mtex_layers + _ufGpuWorld._mtex_color));
+  vec4 nd = texture(_textures, vec3(_texGS,  _mtexidGS * _ufGpuWorld._mtex_layers + _ufGpuWorld._mtex_depthnormal));
   
   vec3 n = normalize(nd.xyz * 2 - 1);
   float d = nd.w * 2 - 1;
-  vec3 p =  vec3(_vertGS.xy, d * _ufGpuWorld._zrange);
+
+  vec3 p =  vec3(_vertGS.xy, d * _objScaleZGS);
 
   _output = vec4(lightFragmentBlinnPhong(p, col.rgb, n, vec4(1.0f, 1.0f, 1.0f, 100.0f)), col.a);
 

@@ -70,22 +70,61 @@ import_file('./BlenderTools.py')
 
 msg("cwd="+os.getcwd())
 
+class ExportFormat: pass  # nopep8
+class ExportLayer: pass  # nopep8
+class LayerOutput: pass  # nopep8
 class MtRegion: pass  # nopep8
 class MtNode: pass  # nopep8
-class PackedTexture: pass  # nopep8
+class MtIsland: pass  # nopep8
 class ImagePacker: pass  # nopep8
 class ActionInfo: pass  # nopep8
 class ObjectInfo: pass  # nopep8
 class RenderInfo: pass  # nopep8
+class ExportSettings: pass  # nopep8
 class Bake26: pass  # nopep8
-class ExportFormat: pass  # nopep8
 
 class ExportFormat:
   PNG = 'PNG'
-  EXR = 'EXR'
+  OPEN_EXR = 'EXR'
 class ExportLayer:
   Color = 'Color'
   DepthNormal = 'DepthNormal'
+  Position = 'Position'
+class RenderEngine:
+  Eevee = 'BLENDER_EEVEE'
+  Cycles = 'CYCLES'
+
+class LayerOutput:
+  # def __init__(self, node, format, layer):
+  def __init__(self, layer: ExportLayer, format: ExportFormat, bitdepth: int):
+    self._layer: ExportLayer = layer
+    self._format: ExportFormat = format
+    self._bitdepth: int = bitdepth
+    self._compression: int = 100  # 0-100
+    self._mode: str = 'RGBA'  # RGB RGBA
+  def file_ext(self):
+    ext = '.'
+    if self._format == ExportFormat.PNG:
+      ext += 'png'
+    elif self._format == ExportFormat.OPEN_EXR:
+      ext += 'exr'
+    else:
+      throw()
+    return ext
+  def layer_ext(self):
+    ext = '.' + str(self._layer) + self.file_ext()
+    return ext
+  def mtex_filename(self, index: int):
+    s = 'B2MT.' + str(int(index)).zfill(3) + self.layer_ext()
+    return s
+  @staticmethod
+  def parse_extension(path):
+    d = path.rfind('.')
+    if d > 0:
+      d = path[:d].rfind('.')
+      if d > 0:
+        return path[d:]
+    return None
 
 class MtRegion:
   def __init__(self):
@@ -159,46 +198,8 @@ class MtNode:
           self._rect.right(),
           self._rect.bottom())
       return self._child[0].plop(tex)
-class b2_obj:
-  _ob_idgen = 1
-  def __init__(self):
-    self._id = -1
-    self._name = ""
-    self._actions = {}
-  def serialize(self, bf: BinaryFile):
-    bf.writeInt32(self._id)
-    bf.writeString(self._name)
-    bf.writeInt32(len(self._actions))
-    for act in self._actions:
-      self._actions[act].serialize(bf)
-class b2_action:
-  def __init__(self):
-    self._id = -1
-    self._name = ""
-    self._frames = {}
-  def serialize(self, bf: BinaryFile):
-    bf.writeInt32(self._id)
-    bf.writeString(self._name)
-    bf.writeInt32(len(self._frames))
-    for fr in self._frames:
-      self._frames[fr].serialize(bf)
-class b2_frame:
-  def __init__(self):
-    self._seq: float = -1  # float
-    self._texid: int = -1
-    self._x: int = -1
-    self._y: int = -1
-    self._w: int = -1
-    self._h: int = -1
-  def serialize(self, bf: BinaryFile):
-    bf.writeFloat(self._seq)
-    bf.writeInt32(self._texid)
-    bf.writeInt32(self._x)
-    bf.writeInt32(self._y)
-    bf.writeInt32(self._w)
-    bf.writeInt32(self._h)
-
-class PackedTexture: #b2_mtex
+class MtIsland:
+  # individual texture of a multiple image mega texure
   def __init__(self):
     self._texid = 0
     self._size = 0  # w and h
@@ -208,38 +209,42 @@ class PackedTexture: #b2_mtex
 
   def compose(self, outpath):
     assert(self._root)
-    # todo loop generic
-    self.packLayer(outpath, 'mt_color', 0)
-    self.packLayer(outpath, 'mt_normal_depth', 1)
+    for layer in Bake26.c_layers:
+      self.packLayer(outpath, layer)
 
-  def packLayer(self, outpath, name, layer):
-    msg("packing "+name+" layer="+str(layer)+" size="+str(self._size))
-    ctest = (255, 0, 255, 255)
-    czero = (0, 0, 0, 0)
-    with Image.new(mode="RGBA", size=(self._size, self._size), color=czero) as master_img:
+  def packLayer(self, outpath, layeroutput: LayerOutput):
+    fname = layeroutput.mtex_filename(self._texid)
+    msg("packing layer "+fname+" size="+str(self._size))
+
+    cpink = (255, 0, 255, 255)
+    cblack = (0, 0, 0, 0)
+    # bpy.ops.image.new(name='Untitled', width=1024, height=1024, color=(0.0, 0.0, 0.0, 1.0), alpha=True, generated_type='BLANK', float=False, use_stereo_3d=False, tiled=False)
+    # https://pillow.readthedocs.io/en/stable/handbook/concepts.html#concept-modes
+    # PIL only supports 8 bit pixels.
+    with Image.new(mode="RGBA", size=(self._size, self._size), color=cblack) as master_img:
+      # master_img.convert("PA")
       # note imae ha 'I' and 'F' for 32 bits
       #master_img = Image.new(mode="RGBA", size= (self._size, self._size), color=(0,0,0,0))
-      self.copyImages(self._root, master_img, layer)
-      texname = name+".png"
-      self._texnames.append(texname)
-      path = os.path.join(outpath, texname)
-      msg("saving " + path)
+      self.copyImages(self._root, master_img, layeroutput)
+      self._texnames.append(fname)
+      path = os.path.join(outpath, fname)
+      msg(logcol.greenb + "" + path + logcol.reset)
       master_img.save(path)
 
-  def copyImages(self, node, master, layer):
+  def copyImages(self, node, master, layeroutput: LayerOutput):
     assert(node)
 
     # also create objs for metadata
-    if node._texture != None:
-      path = node._texture._layers[layer]
+    if node._texture != None:  # node._texture = MtRegion
+      path = node._texture._layers[layeroutput._layer]
       if os.path.exists(path):
         with Image.open(path) as img:
           Image.Image.paste(master, img, (node._rect.left(), node._rect.top()))
 
     if node._child[0] != None:
-      self.copyImages(node._child[0], master, layer)
+      self.copyImages(node._child[0], master, layeroutput)
     if node._child[1] != None:
-      self.copyImages(node._child[1], master, layer)
+      self.copyImages(node._child[1], master, layeroutput)
 
   def serialize(self, bf: BinaryFile):
     bf.writeInt32(self._texid)
@@ -251,18 +256,13 @@ class PackedTexture: #b2_mtex
 
 class ImagePacker:
   def packImages(texs, startsize=256, growsize=256):
-    # returns [PackedTextureLayers ]
     mega_texs = []
     size = int(startsize)
     growsize = int(growsize)
-    maxsize = int(4096)
+    maxsize = int(Bake26.c_max_tex_size_px)
 
     # note you cant get gpu maxsize in headless blender.. we just need to pick a value
     msg("packing " + str(len(texs)) + " texs. maxsize=" + str(maxsize))
-
-    # pack until max wh
-    # then remove from texs
-    # then pack again
 
     cur_tex_id = 1
     while size <= maxsize:
@@ -275,7 +275,11 @@ class ImagePacker:
         cur_tex_id += 1
         ImagePacker.removePlopped(pt._root, texs)
         mega_texs.append(pt)
-        size = startsize
+
+        if int(size) == int(maxsize) and Bake26.c_uniform_tex_size == True:
+          size = maxsize
+        else:
+          size = startsize
       else:
         size = min(int(size + growsize), maxsize)
 
@@ -285,7 +289,7 @@ class ImagePacker:
     return mega_texs
 
   def packForSize(texs, size, force, tex_id):
-    pt = PackedTexture()
+    pt = MtIsland()
     pt._size = int(size)
     pt._texid = tex_id
     pt._root = MtNode()
@@ -318,6 +322,79 @@ class ImagePacker:
     if node._child[1] != None:
       ImagePacker.removePlopped(node._child[1], texs)
 
+class b2_obj:
+  _ob_idgen = 1
+  def __init__(self):
+    self._id = -1
+    self._name = ""
+    self._framerate = 0
+    self._actions = []
+  def serialize(self, bf: BinaryFile):
+    bf.writeInt32(self._id)
+    bf.writeString(self._name)
+    bf.writeInt32(self._framerate)
+    bf.writeInt32(len(self._actions))
+    for i in range(0,len(self._actions)):
+      self._actions[i].serialize(bf)
+  def deserialize(self, bf: BinaryFile):
+    self._id = bf.readInt32()
+    self._name = bf.readString()
+    self._framerate = bf.readInt32()
+    alen = bf.readInt32()
+    for i in range(0, alen):
+      a = b2_action()
+      a.deserialize(bf)
+      self._actions.append(a)
+class b2_action:
+  def __init__(self):
+    self._id = -1
+    self._name = ""
+    self._frames = []
+  def serialize(self, bf: BinaryFile):
+    bf.writeInt32(self._id)
+    bf.writeString(self._name)
+    bf.writeInt32(len(self._frames))
+    for i in range(0,len(self._frames)):
+      self._frames[i].serialize(bf)
+  def deserialize(self, bf: BinaryFile):
+    self._id = bf.readInt32()
+    self._name = bf.readString()
+    flen = bf.readInt32()
+    for i in range(0, flen):
+      f = b2_frame()
+      f.deserialize(bf)
+      self._frames.append(f)
+class b2_frame:
+  def __init__(self):
+    self._seq: float = -1  # float
+    self._texid: int = -1
+    self._x: int = -1
+    self._y: int = -1
+    self._w: int = -1
+    self._h: int = -1
+    self._imgs = []  # temp just for objs
+  def serialize(self, bf: BinaryFile):
+    bf.writeFloat(self._seq)
+    bf.writeInt32(self._texid)
+    bf.writeInt32(self._x)
+    bf.writeInt32(self._y)
+    bf.writeInt32(self._w)
+    bf.writeInt32(self._h)
+    bf.writeInt32(len(self._imgs))
+    for img in self._imgs:
+      bf.writeString(img)
+
+  def deserialize(self, bf: BinaryFile):
+    self._seq = bf.readFloat()
+    self._texid = bf.readInt32()
+    self._x = bf.readInt32()
+    self._y = bf.readInt32()
+    self._w = bf.readInt32()
+    self._h = bf.readInt32()
+    ilen = bf.readInt32()
+    for i in range(0, ilen):
+      self.imgs.append(bf.readString())
+
 class ActionInfo:
   def __init__(self):
     self._name = ""
@@ -325,7 +402,7 @@ class ActionInfo:
     self._sweepBox = None
     self._start = 0
     self._end = 0
-    self._texs = {ExportLayer.Color: [], ExportLayer.DepthNormal: []}
+    self._texs: dict = {}
 class ObjectInfo:
   def __init__(self):
     self._name = ""
@@ -335,50 +412,30 @@ class ObjectInfo:
     self._actions = {}
     self._min_start = 99999  # of all anims
     self._max_end = -99999
-class FileOutput:
-  def __init__(self, node, format, layer):
-    self._node = node
-    self._format: ExportFormat = format
-    self._layer: ExportLayer = layer
-  def get_extension(self):
-    return FileOutput.extension(self._format, self._layer)
-  @staticmethod
-  def extension(fmt: ExportFormat, layer: ExportLayer):
-    return '.'+layer+'.'+fmt.lower()
-  @staticmethod
-  def parse_extension(path):
-    d = path.rfind('.')
-    if d > 0:
-      d = path[:d].rfind('.')
-      if d > 0:
-        return path[d:]
-    return None
 
 class RenderInfo:
-  _azumith_slices = 0
-  _zenith_slices = 0
-  # _initial_azumith = 0 todo
-  # _initial_zenith = 0
-  _samples = 10  # note at 1 sample there is no edge blur
-  _render_width = 0  # 256
-  _render_height = 0  # 256
-  _render_major = 64  # major of w/h dimension
-  # _aaSamples = 0
-  _sampleRate = 1
-  # _bFitModel = False
-  _perspective = False  # True #True  # perspective / orthographic changing to ortho causes the image to shrink we'd need to change orthographic bounds as well (ortho_scale)
-  _fov = 40.0
-  _edge_thicknes = 0.8  # 0=minimal edge 1 = maximal edge
-  _edge_blur = 0.4  # 0= no blur edges 1 = full blur edges
+  _render_engine: RenderEngine = RenderEngine.Eevee
+  _render_samples: int = 3  # note at 1 sample there is no edge blur in eevee
+  _render_size: int = 256  # rendered image size, scaled to maximum of w/h dimension
+  _azumith_slices: int = 0
+  _zenith_slices: int = 0
+  _sampleRate: float = 1
+  _normalizeDepth: bool = True
+  _perspective: bool = False  # True #True  # perspective / orthographic changing to ortho causes the image to shrink we'd need to change orthographic bounds as well (ortho_scale)
+  _fov: float = 40.0
+  _edge_thicknes: float = 0.8  # 0=minimal edge 1 = maximal edge
+  _edge_blur: float = 0.4  # 0= no blur edges 1 = full blur edges
+
+  #temp (computed)
+  _render_width: int = 0
+  _render_height: int = 0
   _camera = None
   _empty = None
   _customCamera = False
   _camname = '__b26camera'
   _empname = '__b26empty'
   _dbg_renderCount = 0
-  _fileOutputs: FileOutput = {}
-  _exportFormat: ExportFormat = ExportFormat.PNG
-  _exportBitDepth = 8
+  _compNodes: dict = {}
 
 class Bake26:
   # region Constants
@@ -392,6 +449,22 @@ class Bake26:
   c_backupDirName = 'backup'
   c_metafile_version_major = 0
   c_metafile_version_minor = 2
+  c_bobj_binext='.bobj.bin'
+  c_max_tex_size_px = int(2048)
+  c_uniform_tex_size = True  # TextureArrays cant be variable sizes this must always be true
+
+  c_layers = [
+    LayerOutput(ExportLayer.Color, ExportFormat.PNG, 8),
+    LayerOutput(ExportLayer.DepthNormal, ExportFormat.PNG, 8),
+    #LayerOutput(ExportLayer.Position, ExportFormat.PNG, 16),
+    ]
+
+  @staticmethod
+  def getOutput(layer: ExportLayer):
+    y = [x for x in Bake26.c_layers if x._layer == layer]
+    if len(y) > 0:
+      return y[0]
+    return None
 
   # endregion
 
@@ -471,8 +544,8 @@ class Bake26:
       inf = self.getRenderInfo()
       self.setup()
       self.setRenderSettings()
-      self.makeOutputs()
       self.focusCamera(inf)
+      self.makeOutputs()
 
       bpy.context.view_layer.update()
       self.renderObjectAnimations(inf)
@@ -525,8 +598,19 @@ class Bake26:
 
   def setRenderSettings(self):
     # https://docs.blender.org/api/current/bpy.types.RenderSettings.html
-    bpy.context.scene.render.engine = 'BLENDER_EEVEE'  # 'BLENDER_EEVEE' 'BLENDER_WORKBENCH' 'CYCLES'
-    bpy.context.scene.eevee.taa_render_samples = self._data._samples
+    bpy.context.scene.render.engine = self._data._render_engine   # 'BLENDER_EEVEE'  # 'BLENDER_EEVEE' 'BLENDER_WORKBENCH' 'CYCLES'
+    if self._data._render_engine == RenderEngine.Cycles:
+      bpy.context.scene.cycles.samples = self._data._render_samples
+      bpy.context.scene.cycles.aa_samples = 1
+      bpy.context.scene.cycles.ao_samples = 1
+      bpy.context.scene.cycles.diffuse_samples = 1
+      bpy.context.scene.cycles.glossy_samples = 1
+      bpy.context.scene.cycles.mesh_light_samples = 1
+      bpy.context.scene.cycles.subsurface_samples = 1
+      bpy.context.scene.cycles.transmission_samples = 1
+      bpy.context.scene.cycles.volume_samples = 1
+    elif self._data._render_engine == RenderEngine.Eevee:
+      bpy.context.scene.eevee.taa_render_samples = self._data._render_samples
     bpy.context.scene.render.resolution_x = self._data._render_width
     bpy.context.scene.render.resolution_y = self._data._render_height
     bpy.context.scene.render.pixel_aspect_x = 1.0
@@ -547,12 +631,6 @@ class Bake26:
     #bpy.context.scene.render.use_placeholder = True
     bpy.context.scene.render.filepath = ''
     bpy.context.scene.render.use_file_extension = False
-    # https://docs.blender.org/api/current/bpy.types.ImageFormatSettings.html
-    #bpy.context.scene.render.image_settings.color_mode = 'RGBA'
-    #bpy.context.scene.render.image_settings.file_format = 'PNG'
-    # bpy.context.scene.render.image_settings.color_depth = '8'  # ('8', '16')
-    # bpy.context.scene.render.image_settings.use_zbuffer = False  # TRYING TO DISABLE DEFAULT RENDER BUT USE OUTUPTS
-    #bpy.context.scene.render.image_settings.compression = 100
 
   def makeOutputs(self):
     # https://docs.blender.org/api/current/bpy.types.CompositorNodeRLayers.html
@@ -561,7 +639,7 @@ class Bake26:
     # https://blender.stackexchange.com/questions/105193/unable-to-store-renderings-in-openexr-when-using-the-multiprocessing-in-python
     # https://blender.stackexchange.com/questions/194564/is-it-possible-to-save-depth-values-and-rendered-image-in-different-formats
 
-    #position only in cycles
+    # note: position only in cycles
     bpy.context.scene.use_nodes = True
     bpy.context.scene.view_layers["ViewLayer"].use_pass_ambient_occlusion = False
     bpy.context.scene.view_layers["ViewLayer"].use_pass_combined = False
@@ -569,79 +647,93 @@ class Bake26:
     bpy.context.scene.view_layers["ViewLayer"].use_pass_diffuse_direct = True
     bpy.context.scene.view_layers["ViewLayer"].use_pass_diffuse_indirect = False
     bpy.context.scene.view_layers["ViewLayer"].use_pass_emit = False
-    bpy.context.scene.view_layers["ViewLayer"].use_pass_environment = False #True
-    bpy.context.scene.view_layers["ViewLayer"].use_pass_glossy_color = False #True
-    bpy.context.scene.view_layers["ViewLayer"].use_pass_glossy_direct = False #True
-    bpy.context.scene.view_layers["ViewLayer"].use_pass_glossy_indirect = False #True
+    bpy.context.scene.view_layers["ViewLayer"].use_pass_environment = False  # True
+    bpy.context.scene.view_layers["ViewLayer"].use_pass_glossy_color = False  # True
+    bpy.context.scene.view_layers["ViewLayer"].use_pass_glossy_direct = False  # True
+    bpy.context.scene.view_layers["ViewLayer"].use_pass_glossy_indirect = False  # True
     bpy.context.scene.view_layers["ViewLayer"].use_pass_normal = True
-    bpy.context.scene.view_layers["ViewLayer"].use_pass_position = False # may need to use position (easiest) but z would work with some math
+    bpy.context.scene.view_layers["ViewLayer"].use_pass_position = True
     bpy.context.scene.view_layers["ViewLayer"].use_pass_shadow = False
-    bpy.context.scene.view_layers["ViewLayer"].use_pass_z = True  #distance 
-    '''
-    export mist then use origin
-    we must have object origin as reference to depth values. 
-    '''
-    #bpy.context.scene.view_layers["ViewLayer"].use_pass_mist = True  #0-1
-    # several more
+    bpy.context.scene.view_layers["ViewLayer"].use_pass_z = True
+    bpy.context.scene.view_layers["ViewLayer"].use_pass_mist = False
 
-    # remove all existing compositor nodes
     for node in bpy.context.scene.node_tree.nodes:
       bpy.context.scene.node_tree.nodes.remove(node)
 
     render_layers = bpy.context.scene.node_tree.nodes.new(type='CompositorNodeRLayers')
 
-    # get groups
-    deblur = bpy.context.scene.node_tree.nodes.new(type='CompositorNodeGroup')
-    deblur.node_tree = bpy.data.node_groups['EdgeDeblurGroup']
-    #deblur.name = 'Deblur'
-    combine_depth_normal = bpy.context.scene.node_tree.nodes.new(type='CompositorNodeGroup')
-    combine_depth_normal.node_tree = bpy.data.node_groups['DepthNormalCombine']
-    #combine_depth_normal.name = 'CombineDepthNormal'
+    for output in Bake26.c_layers:
+      self.makeOutput(output, render_layers)
 
-    # deblur render
-    bpy.context.scene.node_tree.links.new(render_layers.outputs["Image"], deblur.inputs["Image"])
-    bpy.context.scene.node_tree.links.new(render_layers.outputs["Alpha"], deblur.inputs["Alpha"])
-    deblur.inputs['Thickness'].default_value = self._data._edge_thicknes
-    deblur.inputs['Blur'].default_value = self._data._edge_blur
-
-    # composite
-    # composite_node = bpy.context.scene.node_tree.nodes.new(type='CompositorNodeComposite')  # leave empty
-    #composite_node.name = 'Composite'
-    #bpy.context.scene.node_tree.links.new(deblur.outputs["Image"], composite_node.inputs['Image'])
-
-    colorOut = self.makeFileOutput(ExportLayer.Color)
-    bpy.context.scene.node_tree.links.new(deblur.outputs["Image"], colorOut.inputs['Image'])
-    #bpy.context.scene.node_tree.links.new(deblur.outputs["Alpha"], colorOut.inputs['Alpha'])
-
-    depthnormal = self.makeFileOutput(ExportLayer.DepthNormal)
-    bpy.context.scene.node_tree.links.new(render_layers.outputs['Normal'], combine_depth_normal.inputs['Normal'])
-    bpy.context.scene.node_tree.links.new(render_layers.outputs['Depth'], combine_depth_normal.inputs['Depth'])
-    bpy.context.scene.node_tree.links.new(combine_depth_normal.outputs['Image'], depthnormal.inputs['Image'])
-
-
-  def makeFileOutput(self, layer: ExportLayer):
+  def makeOutput(self, fout: LayerOutput, render_layers):
     # https://docs.blender.org/api/current/bpy.types.ImageFormatSettings.html
-    output = bpy.context.scene.node_tree.nodes.new(type='CompositorNodeOutputFile')
-    #output.name = layer
-    output.label = layer
-    output.base_path = ""
-    fmt = self._data._exportFormat
-    if fmt == ExportFormat.PNG:
-      output.format.file_format = 'PNG'
-      output.format.color_depth = str(self._data._exportBitDepth)
-      output.format.color_mode = 'RGBA'
-      output.format.compression = 100
+    cnode = bpy.context.scene.node_tree.nodes.new(type='CompositorNodeOutputFile')
+    cnode.label = fout._layer
+    cnode.base_path = ""
+
+    if fout._format == ExportFormat.PNG:
+      cnode.format.file_format = 'PNG'
+      cnode.format.color_depth = str(fout._bitdepth)
+      cnode.format.color_mode = fout._mode
+      cnode.format.compression = fout._compression
       # output.format.use_zbuffer = True #getting weird depth settings
-    elif fmt == ExportFormat.EXR:
-      output.format.file_format = 'EXR'  # 'OPEN_EXR'  # HDR
-      output.format.color_depth = str(self._data._exportBitDepth)  # '8'  # '32'
-      output.format.color_mode = 'RGBA'
-      output.format.exr_codec = 'ZIP'
-      output.format.compression = 100
+    elif fout._format == ExportFormat.OPEN_EXR:
+      cnode.format.file_format = 'OPEN_EXR'  # 'OPEN_EXR'  # HDR
+      cnode.format.color_depth = str(fout._bitdepth)
+      cnode.format.color_mode = fout._mode
+      cnode.format.exr_codec = 'ZIP'
+      cnode.format.use_zbuffer = False
+      cnode.format.compression = fout._compression
     else:
       throw()
-    self._data._fileOutputs[layer] = FileOutput(output, fmt, layer)
-    return output
+    if fout._layer == ExportLayer.Color:
+      deblur = bpy.context.scene.node_tree.nodes.new(type='CompositorNodeGroup')
+      deblur.node_tree = bpy.data.node_groups['EdgeDeblurGroup']
+      bpy.context.scene.node_tree.links.new(render_layers.outputs["Image"], deblur.inputs["Image"])
+      bpy.context.scene.node_tree.links.new(render_layers.outputs["Alpha"], deblur.inputs["Alpha"])
+      deblur.inputs['Thickness'].default_value = self._data._edge_thicknes
+      deblur.inputs['Blur'].default_value = self._data._edge_blur
+      bpy.context.scene.node_tree.links.new(deblur.outputs["Image"], cnode.inputs['Image'])
+    elif fout._layer == ExportLayer.DepthNormal:
+      combine_depth_normal = bpy.context.scene.node_tree.nodes.new(type='CompositorNodeGroup')
+      combine_depth_normal.node_tree = bpy.data.node_groups['DepthNormalCombine']
+
+      dbg("cam="+str(self._data._camera.location) + " empty="+str(self._data._empty.location))
+      campos = Bake26.makeInputVec3(self._data._camera.location)
+      emptypos = Bake26.makeInputVec3(self._data._empty.location)
+      normdepth = Bake26.makeInputFloat(1 if self._data._normalizeDepth == True else 0)
+
+      bpy.context.scene.node_tree.links.new(render_layers.outputs['Normal'], combine_depth_normal.inputs['Normal'])
+      bpy.context.scene.node_tree.links.new(render_layers.outputs['Depth'], combine_depth_normal.inputs['Z'])
+      bpy.context.scene.node_tree.links.new(campos.outputs[0], combine_depth_normal.inputs['CamPos'])
+      bpy.context.scene.node_tree.links.new(emptypos.outputs[0], combine_depth_normal.inputs['ProjectPos'])
+      bpy.context.scene.node_tree.links.new(normdepth.outputs[0], combine_depth_normal.inputs['Normalize'])
+
+      bpy.context.scene.node_tree.links.new(combine_depth_normal.outputs['Image'], cnode.inputs['Image'])
+    elif fout._layer == ExportLayer.Position:
+      bpy.context.scene.node_tree.links.new(render_layers.outputs['Position'], cnode.inputs['Image'])
+    else:
+      throw()
+
+    self._data._compNodes[fout._layer] = cnode
+
+  def makeInputVec3(vec: Vector):
+    nv_x = bpy.context.scene.node_tree.nodes.new(type='CompositorNodeValue')
+    nv_x.outputs[0].default_value = vec.x
+    nv_y = bpy.context.scene.node_tree.nodes.new(type='CompositorNodeValue')
+    nv_y.outputs[0].default_value = vec.y
+    nv_z = bpy.context.scene.node_tree.nodes.new(type='CompositorNodeValue')
+    nv_z.outputs[0].default_value = vec.z
+    nv = bpy.context.scene.node_tree.nodes.new(type='CompositorNodeCombineXYZ')
+    bpy.context.scene.node_tree.links.new(nv_x.outputs[0], nv.inputs[0])
+    bpy.context.scene.node_tree.links.new(nv_y.outputs[0], nv.inputs[1])
+    bpy.context.scene.node_tree.links.new(nv_z.outputs[0], nv.inputs[2])
+    return nv
+
+  def makeInputFloat(f: float):
+    nv = bpy.context.scene.node_tree.nodes.new(type='CompositorNodeValue')
+    nv.outputs[0].default_value = f
+    return nv
 
   def renderObjectAnimations(self, inf):
     msg("name=" + inf._name)
@@ -706,12 +798,19 @@ class Bake26:
     return inf
 
   def renderAnimations(self, inf):
+    b2ob = b2_obj()
+    b2ob._name = inf._name
 
-    def renderob(frame, actioninf):
+    def renderob(frame: float, actioninf):
+      b2a = b2_action()
+      b2a._name = actioninf._name
+      b2a._id = len(b2ob._actions)+1
+      b2ob._actions.append(b2a)
+
       if self._data._customCamera == False:
-        self.renderAngles(actioninf, inf._name, frame)
+        self.renderAngles(actioninf, inf._name, frame, b2a)
       else:
-        self.renderAction(actioninf, inf._name, 0, 0, 0)
+        self.renderAction(actioninf, inf._name, 0, 0, 0, b2a)
 
     msg("exporting: " + str(inf._min_start) + "-" + str(inf._max_end))
     self.animateObjectActions(inf, renderob)
@@ -719,6 +818,8 @@ class Bake26:
     for actname in inf._actions:
       if actname != Bake26.c_sprite_name:
         self.exportPreview(inf._name, actname)
+
+    self.writeObjMetadata(b2ob)
 
   def focusCamera(self, inf):
     bb = inf._sweepBox
@@ -744,11 +845,11 @@ class Bake26:
     assert(sx > 0 and sz > 0)
 
     if sx > sz:
-      self._data._render_width = self._data._render_major
-      self._data._render_height = int(round(self._data._render_major * sz / sx))
+      self._data._render_width = self._data._render_size
+      self._data._render_height = int(round(self._data._render_size * sz / sx))
     else:
-      self._data._render_height = self._data._render_major
-      self._data._render_width = int(round(self._data._render_major * sx / sz))
+      self._data._render_height = self._data._render_size
+      self._data._render_width = int(round(self._data._render_size * sx / sz))
     msg("render res =" + str(self._data._render_width) + "x" + str(self._data._render_height))
 
     bpy.context.scene.render.resolution_x = self._data._render_width
@@ -757,7 +858,7 @@ class Bake26:
 
   def animateObjectActions(self, inf, func):
     # loop all actions in object and animate them at all keyframe intervals
-    def animateAnims(frame):
+    def animateAnims(frame: float):
       for actname in inf._actions:
         if inf._object != None:
           inf._object.animation_data.action = inf._actions[actname]._action
@@ -792,21 +893,29 @@ class Bake26:
 
   def exportPreview(self, obname, actname):
     path = self.actionOutputPath(obname, actname)
-    msg("path="+str(path))
+    #msg("path="+str(path))
     assert(os.path.exists(path))
-    ext = self._data._fileOutputs[ExportLayer.Color].get_extension()
+    colorout = Bake26.getOutput(ExportLayer.Color)
+    if colorout == None:
+      err("could not output preview - no color format was output")
+    else:
+      ext = colorout.layer_ext()
+      fcount = len(glob.glob1(path, "*"+ext))
+      if fcount > 1:
+        if self._doVid:
+          self.exportMp4(path, fcount, ext)
+        if self._doGif:
+          self.exportGif(path, fcount, ext)
+  @staticmethod
+  def frameRate(dividend: float):
+    csframe = (dividend / (float(bpy.context.scene.render.fps) / float(self._data._sampleRate)))
 
-    fcount = len(glob.glob1(path, "*"+ext))
-    if fcount > 1:
-      if self._doVid:
-        self.exportMp4(path, fcount, ext)
-      if self._doGif:
-        self.exportGif(path, fcount, ext)
   def exportGif(self, path, fcount, ext):
     msg("doing gif, fcount="+str(fcount))
-    csframe = (100.0 / (float(bpy.context.scene.render.fps) / float(self._data._sampleRate)))
+    csframe = Bake26.frameRate(100.0)  # (100.0 / (float(bpy.context.scene.render.fps) / float(self._data._sampleRate)))
     cmd = "convert -delay " + str(csframe) + " -dispose Background -loop 0 " + path + "/*"+ext+" " + path + "/output.gif &"
     subprocess.run(cmd, shell=True)
+
   def exportMp4(self, path, fcount, ext):
     msg("doing mp4, fcount="+str(fcount))
     ss = 1
@@ -819,7 +928,8 @@ class Bake26:
     cmd = "ffmpeg -framerate " + str(int(mp4frame)) + " -stream_loop 5 -pattern_type glob -i '" + path + "/*"+ext+"' -crf 0 " + sclxy + " -c:v libx265 -x265-params lossless=1 '" + spritepath + "/output.mp4'"
     msg("cmd=" + cmd)
     subprocess.run(cmd, shell=True)
-  def renderAngles(self, actioninf, obname, frame):
+
+  def renderAngles(self, actioninf, obname, frame: float, act: b2_action):
     if self._data._azumith_slices > 0:
       rot_mat = Matrix.Rotation((Utils.M_2PI / float(self._data._azumith_slices)), 4, 'Z')
 
@@ -838,29 +948,36 @@ class Bake26:
         self._data._camera.matrix_world = pmat @ rot_mat
         # msg("mat="+str(self._dummyCamera.matrix_world))
 
-        self.renderAction(actioninf, obname, frame, azumith, zenith)
+        self.renderAction(actioninf, obname, frame, azumith, zenith, act)
 
-  def renderAction(self, actioninf, obname, frame, azumith, zenith):
+  def renderAction(self, actioninf, obname, frame: float, azumith, zenith, act: b2_action):
     fpath = self.actionFilePath(obname, actioninf._name, frame, azumith, zenith)
 
     # blender's paths are just screwed up sorry to say. possible bug.
     # chdir to root then add the // relpath for blender
-    # blender removes the relpath and appends the path to root 
+    # blender removes the relpath and appends the path to root
     # note: blender reports output as 'home/' without root
+    b2f = b2_frame()
+    b2f._seq = frame
+    act._frames.append(b2f)
 
-    dn = os.path.dirname('/') #bpy.data.filepath)
+    dn = os.path.dirname('/')  # bpy.data.filepath)
     if not os.getcwd() == dn:
       os.chdir(dn)
 
     bpy.context.scene.render.filepath = ''
 
-    for outname in self._data._fileOutputs:
-      out = self._data._fileOutputs[outname]
-      abs_path = fpath + out.get_extension()
+    for out in Bake26.c_layers:
+      abs_path = fpath + out.layer_ext()
       #rel_path = bpy.path.relpath(rel_path)
-      out.base_path =  ''
-      out._node.file_slots[0].path = '//' + abs_path
-      actioninf._texs[out._layer].append(abs_path)
+      cnode = self._data._compNodes[out._layer]
+      cnode.base_path = ''
+      cnode.file_slots[0].path = '//' + abs_path
+      abspath_w_frame = abs_path.replace(Bake26.c_framePlaceholder, str(int(frame)).zfill(len(Bake26.c_framePlaceholder)))
+      if out._layer not in actioninf._texs:
+        actioninf._texs[out._layer] = []
+      actioninf._texs[out._layer].append(abspath_w_frame)
+      b2f._imgs.append(abspath_w_frame)
 
     bpy.ops.render.render(write_still=False)  # use only compositor outputs
     self._data._dbg_renderCount += 1
@@ -885,7 +1002,8 @@ class Bake26:
     # actionFileName spriteFileName
     sep = Bake26.spritePathSeparator()
     # con obj act az   zen  fr  frf ext
-    # ID.guy.run.0025.0008.0034.200.Color.png
+    # ID.guy.run.0025.0008.0034.200
+    # --> output ext will be layer -> .Color.png etc
 
     # cant have delimiter in names.
     assert(not sep in obname)
@@ -913,26 +1031,38 @@ class Bake26:
   def packTextures(self, outpath):
     texs = dict()
     outpath = os.path.abspath(outpath)
-    Bake26.gatherTextures(outpath, texs, True)  # skip /output because we put the mt's in there
+
+    #throw("TODO: gatherObjs and use their texture strings")
+    objs = []
+    Bake26.gatherObjs(outpath, objs)  # skip /output because we put the mt's in there
+
+    #Bake26.gatherTextures(outpath, texs, True)  # skip /output because we put the mt's in there
+
+    if len(texs) == 0:
+      throw("no textures found. exporter must be run")
+
     texs_cpy = dict(texs)
     pts = ImagePacker.packImages(texs)
 
     for pt in pts:
-      msg("writing " + " id=" + str(pt._id) + " count=" + str(pt._regioncount) + " size=" + str(pt._size))
+      #msg("writing " + " id=" + str(pt._id) + " count=" + str(pt._regioncount) + " size=" + str(pt._size))
       pt.compose(outpath)
     self.writeMetadata(outpath, texs_cpy, pts)
 
   def writeMetadata(self, outpath, texs, pts):
-    mdpath = os.path.join(outpath, "b2_meta.bin")
+    mdpath = os.path.join(outpath, "B2MT.bin")
     msg("saving metadata path="+mdpath)
 
-    obj_dict = {}
+    #obj_dict = {}
 
     # build objects
-    for region_fname in texs:
-      region = texs[region_fname]
-      assert(region._node != None)  # call this AFTER  build the nodetree
-      Bake26.buildB2Obj(region, region_fname, obj_dict)
+    #for region_fname in texs:
+    #  region = texs[region_fname]
+    #  assert(region._node != None)  # call this AFTER  build the nodetree
+    throw("TODO")
+#
+    #  # **TODO: we ar3e getting rid of this in favor of just saving the obj metadata
+    #  Bake26.buildB2Obj(region, region_fname, obj_dict)
 
     # write file
     with open(mdpath, 'wb') as file:
@@ -946,104 +1076,156 @@ class Bake26:
       bf.writeInt32(self.c_metafile_version_major)
       bf.writeInt32(self.c_metafile_version_minor)
 
+      bf.writeInt32(bpy.context.scene.render.fps)
+      bf.writeInt32(Bake26.bpy.context.scene.render.fps)
+
+
       # texs
       bf.writeInt32(len(pts))
       for i in range(0, len(pts)):
         pts[i].serialize(bf)
 
       # objs
-      bf.writeInt32(len(obj_dict))
-      for obname in obj_dict:
-        ob = obj_dict[obname]
-        ob.serialize(bf)
+      throw("TODO")
+      # bf.writeInt32(len(obj_dict))
+      # for obname in obj_dict:
+      #   ob = obj_dict[obname]
+      #   ob.serialize(bf)
 
-  def buildB2Obj(region: MtRegion, region_fname: str, obj_dict: dict):
-    sep = Bake26.spritePathSeparator()
-    grp = '([^'+sep+']+)'
-    # parse name
-    rxstr = Bake26.c_OBNM
-    rxstr += sep + grp  # ob 0
-    rxstr += sep + grp  # act 1
-    rxstr += sep + grp  # a 2
-    rxstr += sep + grp  # z 3
-    rxstr += sep + grp  # ifr 4
-    rxstr += sep + grp  # ffr 5
-    rxstr += sep + '(.+)'  # ext 6
-    # msg("fname="+region_fname)
-    # msg("rxstr="+rxstr)
-    fname = os.path.basename(region_fname)
-    rx = re.search(rxstr, fname)
+  def writeObjMetadata(self, ob):
+    # post render metadata write
+    fpath = self.objectOutputPath(ob._name, False, 0)
+    fpath = os.path.join(fpath, ob._name + Bake26.c_bobj_binext)
+    msg("saving obj metadata to " + fpath)
 
-    if (not rx) or (len(rx.groups()) != 7):
-      raise Exception("Invalid file format group count ="+str(len(rx.groups())))
-    # msg("rx="+str(rx.groups()))
+    with open(fpath, 'wb') as file:
+      bf = BinaryFile(file)
+      ob.serialize(bf)
 
-    obname = rx.groups()[0]
-    actname = rx.groups()[1]
-    ifr = rx.groups()[4]
-    ffr = rx.groups()[5]
-
-    if not obname in obj_dict:
-      obj = b2_obj()
-      obj._id = b2_obj._ob_idgen
-      b2_obj._ob_idgen += 1
-      obj._name = obname
-      obj_dict[obname] = obj
-    obj = obj_dict[obname]
-    if not actname in obj._actions:
-      act = b2_action()
-      act._id = len(obj._actions)+1
-      act._name = actname
-      obj._actions[actname] = act
-    act = obj._actions[actname]
-    fr = b2_frame()
-    fr._texid = region._texid  # id of megatex
-    fr._x = region._node._rect.left()  # id of megatex
-    fr._y = region._node._rect.top()  # id of megatex
-    fr._w = region._node._rect.width()  # id of megatex
-    fr._h = region._node._rect.height()  # id of megatex
-    seq_str = ifr+"."+ffr
-    assert(not seq_str in act._frames)
-    seq = float(seq_str)  # "0004.200"
-    fr._seqid = seq
-    act._frames[seq_str] = fr
-
-  def gatherTextures(fpath, texs: dict, skipdir):
+  def gatherObjs(fpath: str, objs : list):  # , color_extension: str, layers: dict
     fpath = os.path.abspath(fpath)
     fds = os.listdir(fpath)  # get all files' and folders' names in the current directory
-    color_extension = FileOutput.extension(ExportFormat.PNG, ExportLayer.Color)
 
-    for item in fds:  # loop through all the files and folders
+    for item in fds:
+      file_path = os.path.join(fpath, item)
 
-      color_path = os.path.join(fpath, item)
+      if os.path.isfile(file_path):
+        if Bake26.c_bobj_binext in file_path:
+          with open(file_path, 'wb') as file:
+            bf = BinaryFile(file)
+            ob = b2_obj ()
+            ob.deserialize(bf)
+            objs.append(ob)
+            throw("TODO")
+#           layer_ext = LayerOutput.parse_extension(item)
+# 
+#           if layer_ext != None:
+#             if layer_ext == color_extension:
+#               w, h = Utils.get_image_size(file_path)
+#               assert(w > 0)
+#               assert(h > 0)
+#               texs[file_path] = MtRegion()
+#               texs[file_path]._pathColor = file_path
+#               texs[file_path]._width = int(w)
+#               texs[file_path]._height = int(h)
+#               texs[file_path]._texid = -1
+#               texs[file_path]._node = None
+#               texs[file_path]._layers = {}
+# 
+#               for output in Bake26.c_layers:
+#                 out_layer_ext = output.layer_ext()
+#                 layer_path = file_path.replace(layer_ext, out_layer_ext)
+#                 texs[file_path]._layers[output._layer] = layer_path
 
-      if os.path.isfile(color_path):
-        if skipdir == False:
 
-          layer_ext = FileOutput.parse_extension(item)
-
-          if layer_ext == color_extension:
-            w, h = Utils.get_image_size(color_path)
-            assert(w > 0)
-            assert(h > 0)
-            # now set norms and shit
-            texs[color_path] = MtRegion()
-            texs[color_path]._pathColor = color_path
-            texs[color_path]._width = int(w)
-            texs[color_path]._height = int(h)
-            texs[color_path]._texid = -1
-            texs[color_path]._node = None
-            # map region to sprite and create sprite if none
-
-            norm_ext = FileOutput.extension(ExportFormat.PNG, ExportLayer.DepthNormal)
-            norm_path = color_path.replace(layer_ext, norm_ext)
-
-            texs[color_path]._layers = [color_path, norm_path]
-
-
-      elif os.path.isdir(color_path):
+      elif os.path.isdir(file_path):
         if item != '.' and not Bake26.c_backupDirName in item:
-          Bake26.gatherTextures(color_path, texs, False)
+          Bake26.gatherTextures(file_path, objs)
+
+#   def buildB2Obj(region: MtRegion, region_fname: str, obj_dict: dict):
+#     sep = Bake26.spritePathSeparator()
+#     grp = '([^'+sep+']+)'
+#     # parse name
+#     rxstr = Bake26.c_OBNM
+#     rxstr += sep + grp  # ob 0
+#     rxstr += sep + grp  # act 1
+#     rxstr += sep + grp  # a 2
+#     rxstr += sep + grp  # z 3
+#     rxstr += sep + grp  # ifr 4
+#     rxstr += sep + grp  # ffr 5
+#     rxstr += sep + '(.+)'  # ext 6
+#     # msg("fname="+region_fname)
+#     # msg("rxstr="+rxstr)
+#     fname = os.path.basename(region_fname)
+#     rx = re.search(rxstr, fname)
+#
+#     if (not rx) or (len(rx.groups()) != 7):
+#       raise Exception("Invalid file format group count ="+str(len(rx.groups())))
+#
+#     obname = rx.groups()[0]
+#     actname = rx.groups()[1]
+#     ifr = rx.groups()[4]
+#     ffr = rx.groups()[5]
+#
+#     if not obname in obj_dict:
+#       obj = b2_obj()
+#       obj._id = b2_obj._ob_idgen
+#       b2_obj._ob_idgen += 1
+#       obj._name = obname
+#       obj_dict[obname] = obj
+#     obj = obj_dict[obname]
+#     if not actname in obj._actions:
+#       act = b2_action()
+#       act._id = len(obj._actions)+1
+#       act._name = actname
+#       obj._actions[actname] = act
+#     act = obj._actions[actname]
+#     fr = b2_frame()
+#     fr._texid = region._texid
+#     fr._x = region._node._rect.left()
+#     fr._y = region._node._rect.top()
+#     fr._w = region._node._rect.width()
+#     fr._h = region._node._rect.height()
+#     seq_str = ifr+"."+ffr
+#     assert(not seq_str in act._frames)
+#     seq = float(seq_str)  # "0004.200"
+#     fr._seq = seq
+#     act._frames[seq_str] = fr          
+#   def gatherTextures(fpath: str, texs: dict, skipdir: bool):  # , color_extension: str, layers: dict
+#     fpath = os.path.abspath(fpath)
+#     fds = os.listdir(fpath)  # get all files' and folders' names in the current directory
+#     color_extension = Bake26.getOutput(ExportLayer.Color).layer_ext()
+# 
+#     for item in fds:
+# 
+#       file_path = os.path.join(fpath, item)
+# 
+#       if os.path.isfile(file_path):
+#         if skipdir == False:
+# 
+#           layer_ext = LayerOutput.parse_extension(item)
+# 
+#           if layer_ext != None:
+#             if layer_ext == color_extension:
+#               w, h = Utils.get_image_size(file_path)
+#               assert(w > 0)
+#               assert(h > 0)
+#               texs[file_path] = MtRegion()
+#               texs[file_path]._pathColor = file_path
+#               texs[file_path]._width = int(w)
+#               texs[file_path]._height = int(h)
+#               texs[file_path]._texid = -1
+#               texs[file_path]._node = None
+#               texs[file_path]._layers = {}
+# 
+#               for output in Bake26.c_layers:
+#                 out_layer_ext = output.layer_ext()
+#                 layer_path = file_path.replace(layer_ext, out_layer_ext)
+#                 texs[file_path]._layers[output._layer] = layer_path
+# 
+#       elif os.path.isdir(file_path):
+#         if item != '.' and not Bake26.c_backupDirName in item:
+#           Bake26.gatherTextures(file_path, texs, False)
 
 
 # ======================================================================================

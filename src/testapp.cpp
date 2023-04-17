@@ -434,6 +434,7 @@ uptr<Image> Image::from_file(std::string path) {
     auto fmtt = bp == 3 ? ImageFormatType::RGB8 : ImageFormatType::RGBA8;
     auto fmt = Gu::imageFormat(fmtt);
     auto img = std::make_unique<Image>(w, h, fmt, (char*)data);
+    img->_name = path;
     stbi_image_free(data);
     return img;
   }
@@ -1807,14 +1808,14 @@ void Bobj::update(double dt, mat4* parent) {
     }
     Assert(fr != nullptr);
     auto texs = Gu::world()->bobjTexs();
-    float w = 1.0f / (float)texs[fr->_texid - 1]._w;  // note invalid - texid doe snot directly map
-    float h = 1.0f / (float)texs[fr->_texid - 1]._h;
+    float w = 1.0f / (float)texs[fr->_mtexid - 1]._w;  // note invalid - texid doe snot directly map
+    float h = 1.0f / (float)texs[fr->_mtexid - 1]._h;
     _gpuObj._tex = fr->texpos();
     _gpuObj._tex.x *= w;
     _gpuObj._tex.y *= h;
     _gpuObj._tex.z *= w;
     _gpuObj._tex.w *= h;
-    _gpuObj._texid = fr->_texid - 1;
+    _gpuObj._mtexid = fr->_mtexid - 1;
   }
   if (Gu::fuzzyNotZero(_gpuLight._radius)) {
     _gpuLight._pos = _pos;
@@ -1966,24 +1967,59 @@ World::World() {
 
   _time = std::make_unique<WorldTime>();
 
-  auto normpath = Gu::relpath("../b26out/mt_normal_depth.png");
-  auto colpath = Gu::relpath("../b26out/mt_color.png");
-  auto metapath = Gu::relpath("../b26out/b2_meta.bin");
+  auto b2data_root = Gu::relpath("../b26out/");
 
-  if (!Gu::exists(normpath) || !Gu::exists(colpath) || !Gu::exists(metapath)) {
-    Raise(std::string() + "could not find textures: \n" + (normpath.string()) + "\n" + (colpath.string()) + "\n run the blender python script first");
+  auto metapath = b2data_root / "B2MT.bin";
+  if (!Gu::exists(metapath)) {
+    Raise(std::string() + "could not find meta: \n  " + (metapath.string()) + "\nrun (check) python script");
   }
+  loadD26Meta(metapath);
+
+  _gpuWorld = std::make_unique<GpuWorld>();
+  _gpuWorld->_zrange = 1.0f;
+  _gpuWorld->_ambient = vec4(1, 1, 1, 0.1f);
+  _gpuWorld->_mtex_layers = -1;
+  _gpuWorld->_mtex_color = -1;
+  _gpuWorld->_mtex_depthnormal = -1;
+  _gpuWorld->_mtex_w = -1;
+  _gpuWorld->_mtex_h = -1;
+
   std::vector<uptr<Image>> images;
-  images.push_back(std::move(Image::from_file(normpath.string())));
-  images.push_back(std::move(Image::from_file(colpath.string())));
+  for (auto& mt : _mtexs) {
+    if (_gpuWorld->_mtex_layers == -1) {
+      _gpuWorld->_mtex_layers = mt._images.size();
+      _gpuWorld->_mtex_w = mt._w;
+      _gpuWorld->_mtex_h = mt._h;
+    }
+    else {
+      Assert(mt._images.size() == _gpuWorld->_mtex_layers);
+      Assert(mt._w == _gpuWorld->_mtex_w);
+      Assert(mt._h == _gpuWorld->_mtex_h);
+    }
+    int layer_idx = 0;
+    for (auto& img : mt._images) {
+      auto imgpath = b2data_root / img;
+      Assert(Gu::exists(imgpath));
+      images.push_back(std::move(Image::from_file(imgpath)));
+      if (_gpuWorld->_mtex_color == -1) {
+        if (imgpath.string().rfind(".Color.") != std::string::npos) {
+          _gpuWorld->_mtex_color = layer_idx;
+        }
+      }
+      if (_gpuWorld->_mtex_depthnormal == -1) {
+        if (imgpath.string().rfind(".DepthNormal.") != std::string::npos) {
+          _gpuWorld->_mtex_depthnormal = layer_idx;
+        }
+      }
+      layer_idx += 1;
+    }
+  }
   _objtexs = std::make_unique<TextureArray>(images, true);
 
-  loadD26Meta(metapath);
-  Assert(_objdatas.size() > 0);
-  // debug
-  for (auto& ob : _objdatas) {
-    msg("ob.name=" + ob._name);
-  }
+  _gpuWorld->_mtex_layers;
+  _gpuWorld->_mtex_color;
+  _gpuWorld->_mtex_depthnormal;
+
   _root = std::make_shared<Bobj>("_root");
 
   // createOb("testobject", &_objdatas[0]);
@@ -2015,7 +2051,6 @@ World::World() {
   };
   _root->addChild(newob);
 
-
   newob = std::make_shared<Bobj>("test_light2");
   newob->lightRadius() = 10;
   newob->lightPower() = 0.75f;
@@ -2030,7 +2065,6 @@ World::World() {
     bobj->pos().z = 0;
   };
   _root->addChild(newob);
-
 
   _visibleStuff = std::make_unique<VisibleStuff>();
 }
@@ -2079,6 +2113,12 @@ void World::loadD26Meta(path_t loc) {
     ob.deserialize(&bf);
     _objdatas.push_back(ob);
   }
+
+  // debug
+  Assert(_objdatas.size() > 0);
+  for (auto& ob : _objdatas) {
+    msg("ob.name=" + ob._name);
+  }
 }
 void World::renderPipeStage(RenderView* rv, PipelineStage* ps) {
   // if (stage == PipelineStageEnum.Deferred)
@@ -2102,6 +2142,7 @@ void World::renderPipeStage(RenderView* rv, PipelineStage* ps) {
 
 #pragma endregion
 #pragma region PipelineStage
+
 bool PipelineStage::beginRender(bool forceclear) {
   //**TODO: this would bind & clear framebuffer target(s)
   glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
@@ -2109,6 +2150,7 @@ bool PipelineStage::beginRender(bool forceclear) {
   return true;
 }
 void PipelineStage::endRender() {}
+
 #pragma endregion
 #pragma region Renderer
 
@@ -2407,9 +2449,7 @@ void Window::initEngine() {
   CheckErrorsDbg();
 
   auto testpath = Gu::relpath("../data/tex/stpeter.jpg");
-  //_testTex = std::make_unique<Texture>(Image::from_file(testpath.string()).get(), true);
   _testTex = Texture::singlePixel(vec4(1, 0, 1, 1));
-  // std::make_unique<Texture>(Image::from_file(testpath.string()).get(), true);
 
   _drawQuads = std::make_unique<DrawQuads>();
   _drawQuads->testMakeQuads();
@@ -2417,38 +2457,10 @@ void Window::initEngine() {
 
   _objShader = std::make_unique<Shader>(Gu::assetpath("shader/b26obj.vs.glsl"), Gu::assetpath("/shader/b26obj.gs.glsl"), Gu::assetpath("/shader/b26obj.fs.glsl"));
 
-  // going away
-  // float d = 4;
-  // GpuObj ob;
-  // ob._mat = mat4(1.0);
-  // ob._mat = glm::scale(ob._mat, vec3(3, 3, 3));
-  // ob._mat = glm::translate(ob._mat, vec3(-d * 3, 1, 0));
-  // ob._tex = vec4(0, 0, 1, 1);  // looks like this is upside down could be a data transfer issue.
-  // ob._texid = 0;
-  // _objs.push_back(ob);
-  // ob._mat = mat4(1.0);
-  // ob._mat = glm::scale(ob._mat, vec3(3, 3, 3));
-  // ob._mat = glm::translate(ob._mat, vec3(-d * 2, 1, 0));
-  // ob._tex = vec4(0, 0, 1, 1);
-  // ob._texid = 1;
-  // _objs.push_back(ob);
-  // ob._mat = mat4(1.0);
-  // ob._mat = glm::scale(ob._mat, vec3(3, 3, 3));
-  // ob._mat = glm::translate(ob._mat, vec3(-d * 1, 1, 0));
-  // ob._tex = vec4(0, 0, 1, 1);
-  // ob._texid = 2;
-  // _objs.push_back(ob);
-  // ob._mat = mat4(1.0);
-  // ob._mat = glm::scale(ob._mat, vec3(3, 3, 3));
-  // ob._mat = glm::translate(ob._mat, vec3(-d * 0, 1, 0));
-  // ob._tex = vec4(0, 0, 1, 1);
-  // ob._texid = 3;
-  // _objs.push_back(ob);
-
   _objBuf = std::make_unique<GpuArray<GpuObj>>();
   _lightBuf = std::make_unique<GpuArray<GpuLight>>();
   _worldBuf = std::make_unique<GpuArray<GpuWorld>>(1);
-  _camBuf = std::make_unique<GpuArray<GpuCamera>>(1);
+  _dataBuf = std::make_unique<GpuArray<GpuViewData>>(1);
 
   _objVao = std::make_unique<VertexArray>();
 
@@ -2537,7 +2549,13 @@ void Window::renderViews() {
     // draw quads test
     _drawQuads->draw(cam.get(), _testTex.get());
 
-    auto test = sizeof(GpuWorld);  // Test - make sure its padded to 16 bytes
+    GpuViewData gvd;
+    gvd._proj = cam->proj();
+    gvd._view = cam->view();
+    gvd._viewPos = cam->pos();
+    gvd._windowWidth = width();
+    gvd._viewDir = cam->forward();
+    gvd._windowHeight = height();
 
     // test
     // test
@@ -2553,27 +2571,16 @@ void Window::renderViews() {
         lights.push_back(ch->gpuLight());
       }
     }
+    gvd._lightCount = lights.size();
+
+    _dataBuf->copyToGpu(gvd);
     _objBuf->copyToGpu(objs);
     _lightBuf->copyToGpu(lights);
-
-    GpuCamera gcam;
-    gcam._proj = cam->proj();
-    gcam._view = cam->view();
-    gcam._viewPos = cam->pos();
-    gcam._windowWidth = width();
-    gcam._viewDir = cam->forward();
-    gcam._windowHeight = height();
-    _camBuf->copyToGpu(gcam);
-
-    GpuWorld gworld;
-    gworld._lightCount = lights.size();
-    gworld._zrange = 1.0f;
-    gworld._ambient = vec4(1, 1, 1, 0.1f);
-    _worldBuf->copyToGpu(gworld);
+    _worldBuf->copyToGpu(Gu::world()->gpuWorld());
 
     _objShader->beginRender();
     _objShader->setTextureUf(Gu::world()->objtexs(), 0, "_textures");
-    _objShader->bindBlock("_ufGpuCamera_Block", dynamic_cast<GpuBuffer*>(_camBuf.get()));
+    _objShader->bindBlock("_ufGpuViewData_Block", dynamic_cast<GpuBuffer*>(_dataBuf.get()));
     _objShader->bindBlock("_ufGpuWorld_Block", dynamic_cast<GpuBuffer*>(_worldBuf.get()));
     _objShader->bindBlock("_ufGpuObj_Block", dynamic_cast<GpuBuffer*>(_objBuf.get()));
     _objShader->bindBlock("_ufGpuLight_Block", dynamic_cast<GpuBuffer*>(_lightBuf.get()));
@@ -2614,7 +2621,7 @@ void b2_action::deserialize(BinaryFile* bf) {
 }
 void b2_frame::deserialize(BinaryFile* bf) {
   _seq = bf->readFloat();
-  _texid = bf->readInt32();
+  _mtexid = bf->readInt32();
   _x = bf->readInt32();
   _y = bf->readInt32();
   _w = bf->readInt32();

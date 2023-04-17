@@ -25,14 +25,15 @@ class Utils: pass  # nopep8
 class Convert: pass  # nopep8
 # endregion
 # region Globals
-def msg(str): _msg("[I] " + str)
-def dbg(str): _msg("[D] " + str)
+def msg(str): _msg(logcol.whiteb + "[I] " + str + logcol.reset)
+def dbg(str): _msg(logcol.cyanb + "[D] " + str + logcol.reset)
+def err(str): _msg(logcol.redb + "[E] " + str + logcol.reset)
 def _msg(str):
   builtins.print(str)
   sys.stdout.flush()
   time.sleep(0)
 def throw(ex):
-  raise Exception("Exception: " + ex)
+  raise Exception(logcol.redb + "" + ex + logcol.reset)
 # endregion
 # region math
 class ivec2:
@@ -100,9 +101,18 @@ class BoundBox:
     return bb
   def __str__(self):
     return Convert.vec3ToString(self._min) + " " + Convert.vec3ToString(self._max)
+
 # endregion
 # region utils
 
+class FileBlock:
+  def __init__(self):
+    self._name: str = ""
+    self._size: int = 0
+    self._data = None
+    self._compressed: bool = False
+    self._crc: int = 0
+    
 class BinaryFile:
   def __init__(self, file):
     assert(file != None)
@@ -110,16 +120,105 @@ class BinaryFile:
     self._block = None
     self._blockname = None
     self._bytesWritten = 0
+    self._bytesRead = 0
+
   def bytesWritten(self): return self._bytesWritten
-  def writeString(self, str):
+  def bytesRead(self): return self._bytesRead
+
+  def writeData(self, data: bytearray):
+    if self._block != None:
+      self._block.extend(data)
+    else:
+      self._binFile.write(data)
+      self._bytesWritten += len(data)
+  def readData(self, count: int):
+    if self._block != None:  # reads some quantity of data and returns it as a string (in text mode) or bytes object (in binary mode).
+      arr = self._block[:count]
+      if self._block.count() == 0:
+        self._block = None
+      return arr
+      #Arrays.copyOfRange(myArray, 5, 10);
+    else:
+      bytesob = self._binFile.read(count)
+      self._bytesRead += count
+      return bytesob
+
+  def readBool(self):
+    return self.readData(struct.unpack('?'))
+  def readByte(self):
+    return self.readData(struct.unpack('B'))
+  def readInt16(self):
+    return self.readData(struct.unpack('h'))
+  def readUInt16(self):
+    return self.readData(struct.unpack('H'))
+  def readInt32(self):
+    return self.readData(struct.unpack('i'))
+  def readUInt32(self):
+    return self.readData(struct.unpack('I'))
+  def readInt64(self):
+    return self.readData(struct.unpack('q'))
+  def readUInt64(self):
+    return self.readData(struct.unpack('Q'))
+  def readFloat(self):
+    return self.readData(struct.unpack('f'))
+  def readDouble(self):
+    return self.readData(struct.unpack('d'))
+  def readString(self):
     # https://docs.python.org/3/library/struct.html
-    bts = bytes(str, 'utf-8')
-    self.writeInt32(len(bts))
-    self.writeData(bts)
+    len = self.readInt32()
+    return str(self.readData(len), 'utf-8')
+  def readMat4(self):
+    val = Matrix(4)
+    for row in range(4):
+      for col in range(4):
+        val[row][col] = self.readFloat()
+    return val
+  def readVec2(self):
+    val = Vector(2)
+    val[0] = self.readFloat()
+    val[1] = self.readFloat()
+    return val
+  def readIVec2(self):
+    val = Vector(2)
+    val[0] = self.readInt32()
+    val[1] = self.readInt32()
+    return val
+  def readVec3(self):
+    val = Vector(3)
+    val[0] = self.readFloat()
+    val[1] = self.readFloat()
+    val[2] = self.readFloat()
+    return val
+  def readVec4(self, val):
+    val = Vector(4)
+    val[0] = self.readFloat()
+    val[1] = self.readFloat()
+    val[2] = self.readFloat()
+    val[3] = self.readFloat()
+    return val
+  def readQuat(self, val):
+    self.readVec4(val)
+    return val
+  def readBlock(self):
+    #TODO: Test this
+    #TODO: Test this
+    #TODO: Test this
+    #TODO: Test this
+    b = FileBlock()
+    b._name = self.readString()
+    b._compressed = self.readBool()  # Always compressing blocks in this one
+    b._crc = self.readUInt32()
+    b._size = self.readUInt32()
+    b._data = self._binFile.read(b._size)
+    b._data = zlib.decompress(b._data)
+    crc = zlib.crc32(b._data)
+    if crc != b._crc:
+      throw("File read error: Block " + b._name + " CRC mismatch.")
+    self._block = b._data
+
   def writeBool(self, val: bool):
     self.writeData(struct.pack('?', val))
   def writeByte(self, val: int):
-    # unsigned char..
     self.writeData(struct.pack('B', val))
   def writeInt16(self, val: int):
     self.writeData(struct.pack('h', val))
@@ -137,41 +236,33 @@ class BinaryFile:
     self.writeData(struct.pack('f', val))
   def writeDouble(self, val: float):
     self.writeData(struct.pack('d', val))
-  def writeData(self, data: bytearray):
-    # append to the current block, or, none
-    if self._block != None:
-      self._block.extend(data)  # append?
-    else:
-      self._binFile.write(data)
-      self._bytesWritten += len(data)
+  def writeString(self, str):
+    # https://docs.python.org/3/library/struct.html
+    bts = bytes(str, 'utf-8')
+    self.writeInt32(len(bts))
+    self.writeData(bts)
   def writeMat4(self, val):
     # mat_4 = val.to_4x4()
     for row in range(4):
       for col in range(4):
         self.writeFloat(val[row][col])
-    return
   def writeVec2(self, val):
     self.writeFloat(val[0])
     self.writeFloat(val[1])
-    return
   def writeIVec2(self, val):
     self.writeInt32(val[0])
     self.writeInt32(val[1])
-    return
   def writeVec3(self, val):
     self.writeFloat(val[0])
     self.writeFloat(val[1])
     self.writeFloat(val[2])
-    return
   def writeVec4(self, val):
     self.writeFloat(val[0])
     self.writeFloat(val[1])
     self.writeFloat(val[2])
     self.writeFloat(val[3])
-    return
   def writeQuat(self, val):
     self.writeVec4(val)
-    return
   def writeMatrixPRS(self, mat):
     loc, rot, sca = mat.decompose()
     self.writeVec3(Convert.glVec3(loc))
@@ -200,7 +291,6 @@ class BinaryFile:
     self._block = None
     self._blockname = None
 
-    # with open(binpath, 'wb') as self._binFile:
 
 class FastBuffer:
   def __init__(self):
@@ -422,6 +512,7 @@ class Utils:
     msg(fname + " line " + str(exc_tb.tb_lineno))
     msg(traceback.format_exc())
     sys.exc_clear()
+
   def get_image_size(fname):
     with open(fname, 'rb') as fhandle:
       head = fhandle.read(24)
@@ -594,4 +685,33 @@ class Convert:
    # m1.transpose()
 
     return m1
+
+# fmt: off
+# isort:skip
+# pylint: disable
+# autopep8: off
+class logcol:
+  _bold = "\033[1;24;27;"
+  _normal = "\033[21;24;27;"
+  black = _normal+"30m"
+  red = _normal+"31m"
+  green = _normal+"32m"
+  yellow = _normal+"33m"
+  blue = _normal+"34m"
+  magenta = _normal+"35m"
+  cyan = _normal+"36m"
+  white = _normal+"37m"
+  blackb = _bold+"30m"
+  redb = _bold+"31m"
+  greenb = _bold+"32m"
+  yellowb = _bold+"33m"
+  blueb = _bold+"34m"
+  magentab = _bold+"35m"
+  cyanb = _bold+"36m"
+  whiteb = _bold+"37m"
+  reset = "\033[0m"
+  # fmt: on
+  # autopep8: on
+# nopep8
+
 # endregion
