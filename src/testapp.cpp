@@ -25,15 +25,15 @@ namespace B26D {
 
 #pragma region static data
 
-std::string Log::CC_BLACK = "30";
-std::string Log::CC_RED = "31";
-std::string Log::CC_GREEN = "32";
-std::string Log::CC_YELLOW = "33";
-std::string Log::CC_BLUE = "34";
-std::string Log::CC_PINK = "35";
-std::string Log::CC_CYAN = "36";
-std::string Log::CC_WHITE = "37";
-std::string Log::CC_NORMAL = "39";
+const std::string Log::CC_BLACK = "30";
+const std::string Log::CC_RED = "31";
+const std::string Log::CC_GREEN = "32";
+const std::string Log::CC_YELLOW = "33";
+const std::string Log::CC_BLUE = "34";
+const std::string Log::CC_PINK = "35";
+const std::string Log::CC_CYAN = "36";
+const std::string Log::CC_WHITE = "37";
+const std::string Log::CC_NORMAL = "39";
 std::map<GLFWwindow*, uptr<Window>> Gu::_windows;
 path_t Gu::_appPath = "";
 path_t Gu::_assetsPath = "";
@@ -41,10 +41,29 @@ Window* Gu::_master_context = nullptr;
 Window* Gu::_context = nullptr;
 uptr<AppConfig> Gu::_appConfig;
 uptr<World> Gu::_world;
+uptr<Prof> Gu::_prof;
 uint64_t Gu::s_idgen = 1;
-uptr<Shader::ShaderMeta> Shader::_meta;
 std::map<ImageFormatType, uptr<ImageFormat>> Gu::_imageFormats;
 std::unordered_map<std::string, sptr<Material>> Gu::_materials;
+uptr<Shader::ShaderMeta> Shader::_meta;
+
+#pragma endregion
+#pragma region Prof
+
+Prof::Prof() {
+  _last = Gu::getMicroSeconds();
+}
+void Prof::dump(const char* file, int line) {
+  auto ct = Gu::context();
+  if (ct->input()->pressOrDown(GLFW_KEY_P)) {
+    uint64_t x = Gu::getMicroSeconds();
+    Log::print("" + std::to_string(x - _last) + "ms", Log::CC_CYAN, true);
+    auto fn = std::filesystem::path(std::string(file)).filename().string();
+    Log::print("  " + fn + ":" + std::to_string(line), Log::CC_GREEN, true);
+    Log::nl();
+    _last = x;
+  }
+}
 
 #pragma endregion
 #pragma region Log
@@ -64,11 +83,21 @@ void Log::inf(std::string s, const char* file, int line) {
 void Log::exception(Exception ex) {
   err(ex.what(), ex.file(), ex.line());
 }
-void Log::print(std::string s) {
-  std::cout << s << std::endl;
+void Log::nl() {
+  std::cout << std::endl;
 }
-void Log::print(std::string s, std::string color, bool bold) {
-  std::cout << cc_color(CC_WHITE, bold) + s + cc_reset();
+void Log::println(std::string s, std::string color, bool bold) {
+  print(s, color, bold, true);
+}
+void Log::print(std::string s, std::string color, bool bold, bool newline) {
+  std::string scolor = "";
+  if (color.length()) {
+    scolor = cc_color(color, bold);
+  }
+  std::cout << scolor + s + cc_reset();
+  if (newline) {
+    nl();
+  }
 }
 std::string Log::cc_reset() {
   return "\033[0m";
@@ -78,7 +107,7 @@ std::string Log::cc_color(std::string color, bool bold) {
 }
 void Log::_output(std::string color, bool bold, std::string type, const char* file, int line, std::string s) {
   s = _header(color, bold, type, file, line) + s + cc_reset();
-  print(s);
+  println(s);
 }
 std::string Log::_header(std::string color, bool bold, std::string type, const char* file, int line) {
   auto pdir = std::filesystem::path(std::string(file)).parent_path().filename();
@@ -93,6 +122,7 @@ void Gu::initGlobals(std::string exe_path) {
   _appPath = path_t(exe_path).parent_path();
   _assetsPath = _appPath / path_t("../../data/");
   _appConfig = std::make_unique<AppConfig>();
+  _prof = std::make_unique<Prof>();
 
   // Most likely 3 components not supported in array textures so just adding 4 would make it ok.
 
@@ -134,32 +164,41 @@ int Gu::run(int argc, char** argv) {
     while (!exit) {
       std::vector<GLFWwindow*> destroy;
       for (auto ite = _windows.begin(); ite != _windows.end(); ite++) {
-        auto win = ite->second.get();
+        prof();
+         auto win = ite->second.get();
         glfwMakeContextCurrent(win->glfwWindow());
         _context = win;
+        prof();
 
         win->updateState();
+        prof();
 
         if (win->visible() && !win->minimized()) {
           win->updateInput();
         }
+        prof();
 
         if (_master_context == win) {
           _world->update();
         }
         win->cullViews();
+        prof();
 
         win->updateSelectedView();
+        prof();
 
         if (win->visible() && !win->minimized()) {
           win->renderViews();
+          prof();
         }
 
         win->swap();
+        prof();
 
         if (win->state() == Window::WindowState::Quit) {
           destroy.push_back(win->glfwWindow());
         }
+        prof();
       }
       for (auto fw : destroy) {
         auto it = _windows.find(fw);
@@ -696,7 +735,7 @@ void Shader::parseUniforms() {
     }
     else {
       _vars.insert(std::make_pair(u_name, std::make_unique<Uniform>(u_name, location, u_size, u_type)));
-      if (Gu::config()->Debug_Print_Shader_Details_Verbose) {
+      if (Gu::config()->Log_Shader_Details_Verbose) {
         LogDebug(_name + ": Uniform name:" + u_name + " size:" + u_size);
       }
     }
@@ -727,7 +766,7 @@ void Shader::parseUniformBlocks() {
 
     glUniformBlockBinding(_glId, blockIndex, blockBinding);
 
-    if (Gu::config()->Debug_Print_Shader_Details_Verbose) {
+    if (Gu::config()->Log_Shader_Details_Verbose) {
       LogDebug(_name + ": Uniform block: " + u_name + " index: " + blockIndex + " binding: " + blockBinding + " size(B): " + blockSize);
     }
 
@@ -753,7 +792,7 @@ void Shader::parseSSBOs() {
       glShaderStorageBlockBinding(_glId, block_index, blockBinding);
       _vars.insert(std::make_pair(blockName, std::make_unique<BufferBlock>(blockName, 0, blockBinding, true, GL_SHADER_STORAGE_BUFFER)));
 
-      if (Gu::config()->Debug_Print_Shader_Details_Verbose) {
+      if (Gu::config()->Log_Shader_Details_Verbose) {
         LogDebug(_name + ": Shader Storage Block: " + blockName + " index: " + blockIndex + " binding: " + blockBinding);
       }
     }
@@ -937,7 +976,7 @@ GLuint Shader::compileShader(GLenum type, std::vector<std::string>& src_lines) {
   return shader;
 }
 void Shader::printSrc(std::vector<std::string> lines) {
-  Log::print(debugFormatSrc(lines), Log::CC_CYAN);
+  Log::println(debugFormatSrc(lines), Log::CC_CYAN);
 }
 void Shader::bindBlock(const string_t&& name, GpuBuffer* g) {
   auto v = getVar(name);
@@ -949,7 +988,9 @@ void Shader::beginRender() {
 void Shader::endRender() {
   for (auto ite = _vars.begin(); ite != _vars.end(); ite++) {
     if (!ite->second->_hasBeenBound) {
-      LogWarn(_name + ": Variable '" + ite->second->_name + "' was not bound before render.");
+      if (Gu::config()->Log_Shader_Bind_Warnings) {
+        LogWarn(_name + ": Variable '" + ite->second->_name + "' was not bound before render.");
+      }
     }
     ite->second->_hasBeenBound = false;
   }
@@ -1802,14 +1843,14 @@ void Bobj::update(double dt, mat4* parent) {
   // create gpuobj
   if (_data != nullptr) {
     _gpuObj._mat = _world;
-    const b2_frame* fr = _frame;
+    const b2_framedata* fr = _frame;
     if (fr == nullptr) {
-      fr = &_data->actions()[0].frames()[0];
+      fr = _data->actions()[0]->frames()[0].get();
     }
     Assert(fr != nullptr);
-    auto texs = Gu::world()->bobjTexs();
-    float w = 1.0f / (float)texs[fr->_mtexid - 1]._w;  // note invalid - texid doe snot directly map
-    float h = 1.0f / (float)texs[fr->_mtexid - 1]._h;
+    auto& texs = Gu::world()->data()->_texs;
+    float w = 1.0f / (float)texs[fr->_mtexid - 1]->_w;  // note invalid - texid doe snot directly map
+    float h = 1.0f / (float)texs[fr->_mtexid - 1]->_h;
     _gpuObj._tex = fr->texpos();
     _gpuObj._tex.x *= w;
     _gpuObj._tex.y *= h;
@@ -1969,60 +2010,55 @@ World::World() {
 
   auto b2data_root = Gu::relpath("../b26out/");
 
+  // load meta
   auto metapath = b2data_root / "B2MT.bin";
   if (!Gu::exists(metapath)) {
     Raise(std::string() + "could not find meta: \n  " + (metapath.string()) + "\nrun (check) python script");
   }
-  loadD26Meta(metapath);
+  msg("Loading metadata " + metapath.string());
+  BinaryFile bf;
+  bf.loadFromDisk(metapath.string());
+  _data = std::make_unique<b2_datafile>();
+  _data->deserialize(&bf);
 
+  // init world
   _gpuWorld = std::make_unique<GpuWorld>();
   _gpuWorld->_zrange = 1.0f;
   _gpuWorld->_ambient = vec4(1, 1, 1, 0.1f);
   _gpuWorld->_mtex_layers = -1;
   _gpuWorld->_mtex_color = -1;
   _gpuWorld->_mtex_depthnormal = -1;
-  _gpuWorld->_mtex_w = -1;
-  _gpuWorld->_mtex_h = -1;
+  _gpuWorld->_mtex_w = _data->_mtex_w;
+  _gpuWorld->_mtex_h = _data->_mtex_h;
 
-  std::vector<uptr<Image>> images;
-  for (auto& mt : _mtexs) {
-    if (_gpuWorld->_mtex_layers == -1) {
-      _gpuWorld->_mtex_layers = mt._images.size();
-      _gpuWorld->_mtex_w = mt._w;
-      _gpuWorld->_mtex_h = mt._h;
+  _gpuWorld->_mtex_layers = _data->_layers.size();
+  for (int i = 0; i < _data->_layers.size(); i++) {
+    if (_data->_layers[i] == "Color") {
+      _gpuWorld->_mtex_color = i;
+    }
+    else if (_data->_layers[i] == "DepthNormal") {
+      _gpuWorld->_mtex_depthnormal = i;
     }
     else {
-      Assert(mt._images.size() == _gpuWorld->_mtex_layers);
-      Assert(mt._w == _gpuWorld->_mtex_w);
-      Assert(mt._h == _gpuWorld->_mtex_h);
+      Raise("invalid layer type" + _data->_layers[i]);
     }
-    int layer_idx = 0;
-    for (auto& img : mt._images) {
+  }
+
+  // create texture layers
+  std::vector<uptr<Image>> images;
+  for (auto& mt : _data->_texs) {
+    for (auto& img : mt->_images) {
       auto imgpath = b2data_root / img;
       Assert(Gu::exists(imgpath));
       images.push_back(std::move(Image::from_file(imgpath)));
-      if (_gpuWorld->_mtex_color == -1) {
-        if (imgpath.string().rfind(".Color.") != std::string::npos) {
-          _gpuWorld->_mtex_color = layer_idx;
-        }
-      }
-      if (_gpuWorld->_mtex_depthnormal == -1) {
-        if (imgpath.string().rfind(".DepthNormal.") != std::string::npos) {
-          _gpuWorld->_mtex_depthnormal = layer_idx;
-        }
-      }
-      layer_idx += 1;
     }
   }
   _objtexs = std::make_unique<TextureArray>(images, true);
 
-  _gpuWorld->_mtex_layers;
-  _gpuWorld->_mtex_color;
-  _gpuWorld->_mtex_depthnormal;
-
+  // world root
   _root = std::make_shared<Bobj>("_root");
 
-  // createOb("testobject", &_objdatas[0]);
+  // default camera
   auto cam = std::make_shared<Camera>("MainCamera");
   cam->components().push_back(std::make_unique<InputController>());
   cam->pos() = vec3(0, 2, -10);
@@ -2033,7 +2069,10 @@ World::World() {
   // test - objs
   // test - objs
   // test - objs
-  auto newob = std::make_shared<Bobj>("test_object", &_objdatas[0]);
+  std::shared_ptr<Bobj> newob = nullptr;
+  Assert(_data->_objs.size() > 0);
+  auto dat = _data->_objs[0].get();
+  newob = std::make_shared<Bobj>("test_object", dat);
   _root->addChild(newob);
 
   newob = std::make_shared<Bobj>("test_light");
@@ -2083,41 +2122,6 @@ void World::cull(RenderView* rv, Bobj* ob) {
     for (auto ch : ob->children()) {
       cull(rv, ch.get());
     }
-  }
-}
-void World::loadD26Meta(path_t loc) {
-  msg("Loading metadata " + loc.string());
-  msg(" expects v" + c_MetaFileVersionMajor + "." + c_MetaFileVersionMinor);
-
-  BinaryFile bf;
-  bf.loadFromDisk(loc.string());
-  int hdr_b = bf.readByte();
-  int hdr_2 = bf.readByte();
-  int hdr_m = bf.readByte();
-  int hdr_d = bf.readByte();
-
-  int major = bf.readInt32();
-  int minor = bf.readInt32();
-
-  Assert(major == c_MetaFileVersionMajor && minor == c_MetaFileVersionMinor);
-
-  int ntexs = bf.readInt32();
-  for (int i = 0; i < ntexs; i++) {
-    b2_mtex b;
-    b.deserialize(&bf);
-    _mtexs.push_back(b);
-  }
-  int nobjs = bf.readInt32();
-  for (int i = 0; i < nobjs; i++) {
-    b2_objdata ob;
-    ob.deserialize(&bf);
-    _objdatas.push_back(ob);
-  }
-
-  // debug
-  Assert(_objdatas.size() > 0);
-  for (auto& ob : _objdatas) {
-    msg("ob.name=" + ob._name);
   }
 }
 void World::renderPipeStage(RenderView* rv, PipelineStage* ps) {
@@ -2599,43 +2603,102 @@ void Window::swap() {
 #pragma endregion
 #pragma region b2
 
+void b2_datafile::deserialize(BinaryFile* bf) {
+  int hdr_b = bf->readByte();
+  int hdr_2 = bf->readByte();
+  int hdr_m = bf->readByte();
+  int hdr_d = bf->readByte();
+
+  _major = bf->readInt32();
+  _minor = bf->readInt32();
+  _mtex_w = bf->readInt32();
+  _mtex_h = bf->readInt32();
+
+  Assert(_major == c_MetaFileVersionMajor && _minor == c_MetaFileVersionMinor);
+  int clayers = bf->readInt32();
+  msgv(clayers);
+  for (int i = 0; i < clayers; i++) {
+    _layers.push_back(bf->readString());
+  }
+
+  int ntexs = bf->readInt32();
+  msgv(ntexs);
+  for (int i = 0; i < ntexs; i++) {
+    auto bt = std::make_unique<b2_mtexdata>();
+    bt->deserialize(bf);
+    _texs.push_back(std::move(bt));
+  }
+  int nobjs = bf->readInt32();
+  msgv(nobjs);
+  for (int i = 0; i < nobjs; i++) {
+    auto ob = std::make_unique<b2_objdata>();
+    ob->deserialize(bf);
+    _objs.push_back(std::move(ob));
+  }
+
+  // debug
+  Assert(_objs.size() > 0);
+  for (auto& ob : _objs) {
+    msgv(ob->_name);
+  }
+}
+void b2_mtexdata::deserialize(BinaryFile* bf) {
+  _texid = bf->readInt32();
+  _w = bf->readInt32();
+  _h = bf->readInt32();
+  msgv(_texid);
+  msgv(_w);
+  msgv(_h);
+  auto numimgs = bf->readInt32();
+  for (int img = 0; img < numimgs; img++) {
+    std::string image = bf->readString();
+    _images.push_back(image);
+  }
+}
 void b2_objdata::deserialize(BinaryFile* bf) {
   _id = bf->readInt32();
   _name = bf->readString();
+  _framerate = bf->readFloat();
+  msgv(_id);
+  msgv(_name);
+  msgv(_framerate);
   auto actioncount = bf->readInt32();
   for (int iact = 0; iact < actioncount; iact++) {
-    b2_action act;
-    act.deserialize(bf);
-    _actions.push_back(act);
+    auto act = std::make_unique<b2_actiondata>();
+    act->deserialize(bf);
+    _actions.push_back(std::move(act));
   }
 }
-void b2_action::deserialize(BinaryFile* bf) {
+void b2_actiondata::deserialize(BinaryFile* bf) {
   _id = bf->readInt32();
   _name = bf->readString();
+  msgv(_id);
+  msgv(_name);
   auto framecount = bf->readInt32();
   for (int ifr = 0; ifr < framecount; ifr++) {
-    b2_frame fr;
-    fr.deserialize(bf);
-    _frames.push_back(fr);
+    auto fr = std::make_unique<b2_framedata>();
+    fr->deserialize(bf);
+    _frames.push_back(std::move(fr));
   }
 }
-void b2_frame::deserialize(BinaryFile* bf) {
+void b2_framedata::deserialize(BinaryFile* bf) {
   _seq = bf->readFloat();
   _mtexid = bf->readInt32();
   _x = bf->readInt32();
   _y = bf->readInt32();
   _w = bf->readInt32();
   _h = bf->readInt32();
-}
-void b2_mtex::deserialize(BinaryFile* bf) {
-  _texid = bf->readInt32();
-  _w = bf->readInt32();
-  _h = bf->readInt32();
-  auto numimgs = bf->readInt32();
-  for (int img = 0; img < numimgs; img++) {
-    std::string image = bf->readString();
-    _images.push_back(image);
+  int32_t c = bf->readInt32();
+  for (int ii = 0; ii < c; ii++) {
+    _imgs.push_back(bf->readString());
   }
+  msgv(_seq);
+  msgv(_mtexid);
+  msgv(_x);
+  msgv(_y);
+  msgv(_w);
+  msgv(_h);
+  msgv(_imgs.size());
 }
 
 #pragma endregion

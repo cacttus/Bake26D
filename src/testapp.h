@@ -228,27 +228,31 @@ class Log {
 private:
   static void _output(std::string color, bool bold, std::string type, const char* file, int line, std::string s);
   static std::string _header(std::string color, bool bold, std::string type, const char* file, int line);
-
+  
 public:
-  static std::string CC_BLACK;
-  static std::string CC_RED;
-  static std::string CC_GREEN;
-  static std::string CC_YELLOW;
-  static std::string CC_BLUE;
-  static std::string CC_PINK;
-  static std::string CC_CYAN;
-  static std::string CC_WHITE;
-  static std::string CC_NORMAL;
+  static const std::string CC_BLACK;
+  static const std::string CC_RED;
+  static const std::string CC_GREEN;
+  static const std::string CC_YELLOW;
+  static const std::string CC_BLUE;
+  static const std::string CC_PINK;
+  static const std::string CC_CYAN;
+  static const std::string CC_WHITE;
+  static const std::string CC_NORMAL;
 
+  static std::string cc_color(std::string color, bool bold);
+  static std::string cc_reset();
   static void err(std::string s, const char* file, int line);
   static void dbg(std::string s, const char* file, int line);
   static void warn(std::string s, const char* file, int line);
   static void inf(std::string s, const char* file, int line);
   static void exception(Exception ex);
-  static void print(std::string s);
-  static void print(std::string s, std::string color, bool bold = false);
-  static std::string cc_reset();
-  static std::string cc_color(std::string color, bool bold);
+  //static void print(std::string s);
+  //static void println(std::string s);
+  static void print(std::string s, std::string color = "", bool bold = false, bool newline=false);
+  static void println(std::string s, std::string color = "", bool bold = false);
+  static void nl();
+
 };
 class Gu {
   static path_t _appPath;
@@ -261,12 +265,14 @@ class Gu {
   static uptr<World> _world;
   static uint64_t s_idgen;
   static std::unordered_map<std::string, sptr<Material>> _materials;
+  static uptr<Prof> _prof;
 
 public:
-  static bool isDebug();
+  static Prof* prof() { return _prof.get(); }
   static World* world() { return _world.get(); }
   static AppConfig* config() { return _appConfig.get(); }
   inline static void trap() {}
+  static bool isDebug();
   static uint64_t genId() { return s_idgen++; }
   static void initGlobals(std::string exe_path);
   static int run(int argc, char** argv);
@@ -723,8 +729,8 @@ protected:
   std::vector<sptr<Bobj>> _children;
   wptr<Bobj> _parent;
   b2_objdata* _data = nullptr;
-  b2_action* _action = nullptr;
-  b2_frame* _frame = nullptr;
+  b2_actiondata* _action = nullptr;
+  b2_framedata* _frame = nullptr;
   sptr<Mesh> _mesh = nullptr;
   sptr<Material> _material = nullptr;
   box3 _boundBox = box3::one();
@@ -747,8 +753,8 @@ public:
   bool& visible() { return _visible; }
   OnUpdateFunc& onUpdate() { return _onUpdate; }
 
-  b2_action*& action() { return _action; }
-  b2_frame* frame() { return _frame; }
+  b2_actiondata*& action() { return _action; }
+  b2_framedata* frame() { return _frame; }
 
   vec3& pos() { return _pos; }
   quat& rot() { return _rot; }
@@ -884,6 +890,15 @@ public:
   InputController();
   virtual void update(Bobj* obj, float dt) override;
 };
+class Prof {
+  //press P to profile
+  uint64_t _last = 0;
+public:
+  Prof();
+  void dump(const char* file, int line);
+};
+#define prof() Gu::prof()->dump(__FILE__, __LINE__)
+
 class WorldTime {
 private:
   double _start = 0;
@@ -912,28 +927,22 @@ public:
   }
 };
 class World {
-  const int c_MetaFileVersionMajor = 0;
-  const int c_MetaFileVersionMinor = 2;
-
-  std::vector<b2_mtex> _mtexs;
-  std::vector<b2_objdata> _objdatas;
   uptr<TextureArray> _objtexs;  // we're going to use arrays
   sptr<Bobj> _root;
   sptr<Camera> _activeCamera;
   uptr<VisibleStuff> _visibleStuff;
   uptr<WorldTime> _time;
   uptr<GpuWorld> _gpuWorld;
-
-  void loadD26Meta(path_t);
+  uptr<b2_datafile> _data;
 
 public:
   Bobj* root() { return _root.get(); }
   TextureArray* objtexs() { return _objtexs.get(); }
   sptr<Camera> activeCamera() { return _activeCamera; }
   VisibleStuff* visibleStuff() { return _visibleStuff.get(); }
-  std::vector<b2_mtex>& bobjTexs() { return _mtexs; }
   WorldTime* time() { return _time.get(); }
   GpuWorld* gpuWorld() { return _gpuWorld.get(); }
+  b2_datafile* data() { return _data.get(); }
 
   World();
   void update();
@@ -1022,31 +1031,54 @@ class AppConfig {
 public:
   bool EnableDebug = true;  // enables debugging
   bool BreakOnGLError = true;
-  bool Debug_Print_Shader_Details_Verbose = true;
+  bool Log_Shader_Details_Verbose = true;
+  bool Log_Shader_Bind_Warnings = false;//true;
+
 };
 
 #pragma endregion
 #pragma region B26
 
+class b2_datafile {
+  const int c_MetaFileVersionMajor = 0;
+  const int c_MetaFileVersionMinor = 2;
+
+public:
+  int32_t _major = -1;
+  int32_t _minor = -1;
+  int32_t _mtex_w = -1;
+  int32_t _mtex_h = -1;
+  std::vector<std::string> _layers;
+  std::vector<uptr<b2_mtexdata>> _texs;
+  std::vector<uptr<b2_objdata>> _objs;
+  void deserialize(BinaryFile* bf);
+};
+class b2_mtexdata {
+public:
+  int32_t _texid;  //= -1;
+  int32_t _w;      //= -1;
+  int32_t _h;      //= -1;
+  std::vector<std::string> _images;
+  void deserialize(BinaryFile* bf);
+};
 class b2_objdata {
 public:
   int32_t _id = -1;
   std::string _name = "";
-  std::vector<b2_action> _actions;
-
-  std::vector<b2_action>& actions() { return _actions; }
+  float _framerate = 0.0f;
+  std::vector<uptr<b2_actiondata>> _actions;
+  std::vector<uptr<b2_actiondata>>& actions() { return _actions; }
   void deserialize(BinaryFile* bf);
 };
-class b2_action {
+class b2_actiondata {
 public:
   int32_t _id = -1;
   std::string _name = "";
-  std::vector<b2_frame> _frames;
-
-  std::vector<b2_frame>& frames() { return _frames; }
+  std::vector<uptr<b2_framedata>> _frames;
+  std::vector<uptr<b2_framedata>>& frames() { return _frames; }
   void deserialize(BinaryFile* bf);
 };
-class b2_frame {
+class b2_framedata {
 public:
   float _seq = -1;
   std::string _name = "";
@@ -1055,17 +1087,8 @@ public:
   int32_t _y = -1;
   int32_t _w = -1;
   int32_t _h = -1;
-
+  std::vector<std::string> _imgs;
   vec4 texpos() const { return vec4(_x, _y, _w, _h); }
-
-  void deserialize(BinaryFile* bf);
-};
-class b2_mtex {
-public:
-  int32_t _texid = -1;
-  int32_t _w;
-  int32_t _h;
-  std::vector<std::string> _images;
   void deserialize(BinaryFile* bf);
 };
 

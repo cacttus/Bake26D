@@ -143,6 +143,7 @@ namespace B26D {
 #define LogDebugCycle(_msgx) _LogXCycle(_msgx, LogDebug)
 
 #define msg(msg) LogInfo(msg)
+#define msgv(__v) msg(""+#__v+"="+__v)
 
 #define Raise(__str) throw B26D::Exception(__FILE__, __LINE__, (__str))
 #define RaiseDebug(__str) \
@@ -157,7 +158,7 @@ namespace B26D {
   do {                                                                                                                                                                                    \
     if (!(__x)) {                                                                                                                                                                         \
       std::string str = std::string("Runtime Assertion Failed: ") + std::string(#__x) + (std::string(__VA_ARGS__).length() == 0 ? "" : (std::string(" -> ") + std::string(__VA_ARGS__))); \
-      Log::print(str);                                                                                                                                                                    \
+      Log::println(str);                                                                                                                                                                    \
       B26D::Gu::debugBreak();                                                                                                                                                             \
       Raise(str);                                                                                                                                                                         \
     }                                                                                                                                                                                     \
@@ -227,6 +228,7 @@ class Exception;
 class BinaryFile;
 
 class Gu;
+class Prof;
 class AppConfig;
 
 class Viewport;
@@ -262,9 +264,10 @@ struct GpuQuadVert;
 struct GpuCamera;
 
 class b2_objdata;
-class b2_action;
-class b2_frame;
-class b2_mtex;
+class b2_actiondata;
+class b2_framedata;
+class b2_mtexdata;
+class b2_datafile;
 
 #pragma endregion
 #pragma region string extensions

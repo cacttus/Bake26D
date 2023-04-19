@@ -689,3 +689,148 @@
   //     _objVao->unbind();
   //     _objShader->unbind();
   //   }
+
+
+
+#   def buildB2Obj(region: MtRegion, region_fname: str, obj_dict: dict):
+#     sep = Bake26.spritePathSeparator()
+#     grp = '([^'+sep+']+)'
+#     # parse name
+#     rxstr = Bake26.c_OBNM
+#     rxstr += sep + grp  # ob 0
+#     rxstr += sep + grp  # act 1
+#     rxstr += sep + grp  # a 2
+#     rxstr += sep + grp  # z 3
+#     rxstr += sep + grp  # ifr 4
+#     rxstr += sep + grp  # ffr 5
+#     rxstr += sep + '(.+)'  # ext 6
+#     # msg("fname="+region_fname)
+#     # msg("rxstr="+rxstr)
+#     fname = os.path.basename(region_fname)
+#     rx = re.search(rxstr, fname)
+#
+#     if (not rx) or (len(rx.groups()) != 7):
+#       raise Exception("Invalid file format group count ="+str(len(rx.groups())))
+#
+#     obname = rx.groups()[0]
+#     actname = rx.groups()[1]
+#     ifr = rx.groups()[4]
+#     ffr = rx.groups()[5]
+#
+#     if not obname in obj_dict:
+#       obj = b2_obj()
+#       obj._id = b2_obj._ob_idgen
+#       b2_obj._ob_idgen += 1
+#       obj._name = obname
+#       obj_dict[obname] = obj
+#     obj = obj_dict[obname]
+#     if not actname in obj._actions:
+#       act = b2_action()
+#       act._id = len(obj._actions)+1
+#       act._name = actname
+#       obj._actions[actname] = act
+#     act = obj._actions[actname]
+#     fr = b2_frame()
+#     fr._texid = region._texid
+#     fr._x = region._node._rect.left()
+#     fr._y = region._node._rect.top()
+#     fr._w = region._node._rect.width()
+#     fr._h = region._node._rect.height()
+#     seq_str = ifr+"."+ffr
+#     assert(not seq_str in act._frames)
+#     seq = float(seq_str)  # "0004.200"
+#     fr._seq = seq
+#     act._frames[seq_str] = fr          
+#   def gatherTextures(fpath: str, texs: dict, skipdir: bool):  # , color_extension: str, layers: dict
+#     fpath = os.path.abspath(fpath)
+#     fds = os.listdir(fpath)  # get all files' and folders' names in the current directory
+#     color_extension = Bake26.getOutput(ExportLayer.Color).layer_ext()
+# 
+#     for item in fds:
+# 
+#       file_path = os.path.join(fpath, item)
+# 
+#       if os.path.isfile(file_path):
+#         if skipdir == False:
+# 
+#           layer_ext = LayerOutput.parse_extension(item)
+# 
+#           if layer_ext != None:
+#             if layer_ext == color_extension:
+#               w, h = Utils.get_image_size(file_path)
+#               assert(w > 0)
+#               assert(h > 0)
+#               texs[file_path] = MtRegion()
+#               texs[file_path]._pathColor = file_path
+#               texs[file_path]._width = int(w)
+#               texs[file_path]._height = int(h)
+#               texs[file_path]._texid = -1
+#               texs[file_path]._node = None
+#               texs[file_path]._layers = {}
+# 
+#               for output in Bake26.c_layers:
+#                 out_layer_ext = output.layer_ext()
+#                 layer_path = file_path.replace(layer_ext, out_layer_ext)
+#                 texs[file_path]._layers[output._layer] = layer_path
+# 
+#       elif os.path.isdir(file_path):
+#         if item != '.' and not Bake26.c_backupDirName in item:
+#           Bake26.gatherTextures(file_path, texs, False)
+
+  //auto metapathjson = b2data_root / "B2MT.json";
+
+  // Json::Value data_json;
+  // std::fstream metafile(metapathjson);  //, std::ifstream::binary
+  // metafile >> data_json;
+
+
+  // template < typename Tx >
+  // std::unique_ptr<Tx> fromJson<Tx>(const str &t){
+  //   std::unique_ptr<Tx> t;
+  // }
+  // #define Jint(__t,__y) __t __y; 
+  // #define Jarr(__t,__y) __t __y; 
+  // #define Jstr(__t,__y) __t __y; 
+  //only support string float int array(vector)
+
+  // LogInfo("empty(" + mt.empty());
+  // LogInfo("size()" + mt.size());
+  // LogInfo("toStyledString()" + mt.toStyledString());
+  // int maj = data_json["_major"].asInt();
+  // int mino = data_json["_minor"].asInt();
+  // // data_json["_texs"].asInt();
+  // // data_json["_objs"].asInt();
+  // for (Json::Value::iterator it = data_json["_texs"].begin(); it != data_json["_texs"].end(); ++it) {
+  //   int tid = (*it)["_texid"].asInt();
+  //   int w = (*it)["_w"].asInt();
+  //   int h = (*it)["_h"].asInt();
+  //   auto jv = (*it)["_images"].isArray();
+  //   auto jv2 = (*it)["_images"].isObject();
+  //   auto jvv = (*it)["_images"].size();
+  //   for (Json::ArrayIndex i=0; i<(*it)["_images"].size(); i++) {
+  //     auto sttt = (*it)["_images"][i].asString();
+  //     int n = 0;
+  //   }
+  //   // "_texid": 1,
+  //   // "_w": 2048,
+  //   // "_h": 2048,
+  //   // "_images": [
+  //   //   "B2MT.001.Color.png"
+  //   // ]
+  // }
+  // metafile.close();
+
+
+  //   auto mmm = mt.getMemberNames();
+  //
+  //   msg(mmm.size());
+  //   for (std::string m : mmm) {
+  //     std::cout<<m<<std::endl;
+  //   }
+  //   for(auto& xx : mt){
+  //     auto tp = xx.type();
+  //
+  //     msg(xx.asString());
+  //   }
+
+  // LogInfo("getMemberNames()"+mt.getMemberNames());

@@ -1,31 +1,13 @@
 # python3
 # Blender MRT sprite exporter (2.6D)
-#
-# blender:
-# currently disabled
-#   ___x='/home/mario/git/Bake26D/Bake26.py';exec(compile(open(___x).read(), ___x, 'exec'))
-
-# terminal:
-#   clear; ~/Desktop/apps/blender*/blender -b --log-level 0 -P ~/git/Bake26D/src/Bake26.py  -- -i ~/git/Bake26D/data/blend/ -o ~/git/Bake26D/b26out -l ~/git/Bake26D/data/blend/_library.blend -p
-#
-# Packing:
-#   Note: Image packing requires blender to have PIL which requires run these commands
-#     blender-3.4.1-linux-x64/3.4/python/bin$ ./python* -m ensurepip --default-pip
-#     blender-3.4.1-linux-x64/3.4/python/bin$ ./python* -m pip install Pillow
-#       Srouce:https://blender.stackexchange.com/questions/119051/how-do-i-install-pillow-and-or-pip-in-blender-python-in-windows-os
-#
-# Exporting:
-#   1. Make sure object actions are in the NLA editor
-#   2. VSCode python format settings (autopep) in ~/.config/.pycodestyle
-#
+# 2.6D export script
+# clear; ~/Desktop/apps/blender*/blender -b --log-level 0 -P ~/git/Bake26D/src/Bake26.py  -- -i ~/git/Bake26D/data/blend/ -o ~/git/Bake26D/b26out -l ~/git/Bake26D/data/blend/_library.blend -gb -gj -p
 # Note about modules
 #   blender python interpreter caches the loaded modules so wont get any edits, use reload()
 #   could not get python modules to work with blender (im doing something wrong)
 #   adding __init__.py and setup.py to the BlendTools causes odd caching issues
 #   restart blender will reload clean python interpreter
 #   blender uses a bundled python so system pip &c does not work with it
-
-
 
 import sys
 import os
@@ -38,7 +20,6 @@ import multiprocessing
 import bpy
 from mathutils import Vector, Matrix, Euler
 from PIL import Image
-import re
 
 def import_file(path, import_global=True):
   try:
@@ -115,7 +96,7 @@ class LayerOutput:
     ext = '.' + str(self._layer) + self.file_ext()
     return ext
   def mtex_filename(self, index: int):
-    s = 'B2MT.' + str(int(index)).zfill(3) + self.layer_ext()
+    s = Bake26.c_B2MT_prefix + '.' + str(int(index)).zfill(3) + self.layer_ext()
     return s
   @staticmethod
   def parse_extension(path):
@@ -131,8 +112,10 @@ class MtRegion:
     self._layers = []
     self._width = 0
     self._height = 0
-    self._texid = -1
+    self._islandid = -1
     self._node = None
+    self._frame = None
+
 class MtNode:
   def __init__(self):
     self._rect = Box2i()
@@ -198,10 +181,11 @@ class MtNode:
           self._rect.right(),
           self._rect.bottom())
       return self._child[0].plop(tex)
+
 class MtIsland:
   # individual texture of a multiple image mega texure
   def __init__(self):
-    self._texid = 0
+    self._islandid = 0
     self._size = 0  # w and h
     self._regioncount = 0
     self._root: MtNode = None
@@ -209,11 +193,12 @@ class MtIsland:
 
   def compose(self, outpath):
     assert(self._root)
-    for layer in Bake26.c_layers:
-      self.packLayer(outpath, layer)
 
-  def packLayer(self, outpath, layeroutput: LayerOutput):
-    fname = layeroutput.mtex_filename(self._texid)
+    for li in range(0, len(Bake26.c_layers)):
+      self.packLayer(outpath, Bake26.c_layers[li], li)
+
+  def packLayer(self, outpath, layeroutput: LayerOutput, idx: int):
+    fname = layeroutput.mtex_filename(self._islandid)
     msg("packing layer "+fname+" size="+str(self._size))
 
     cpink = (255, 0, 255, 255)
@@ -224,30 +209,30 @@ class MtIsland:
     with Image.new(mode="RGBA", size=(self._size, self._size), color=cblack) as master_img:
       # master_img.convert("PA")
       # note imae ha 'I' and 'F' for 32 bits
-      #master_img = Image.new(mode="RGBA", size= (self._size, self._size), color=(0,0,0,0))
-      self.copyImages(self._root, master_img, layeroutput)
+      # master_img = Image.new(mode="RGBA", size= (self._size, self._size), color=(0,0,0,0))
+      self.copyImages(self._root, master_img, idx)
       self._texnames.append(fname)
       path = os.path.join(outpath, fname)
       msg(logcol.greenb + "" + path + logcol.reset)
       master_img.save(path)
 
-  def copyImages(self, node, master, layeroutput: LayerOutput):
+  def copyImages(self, node, master, layeridx: int):
     assert(node)
 
     # also create objs for metadata
     if node._texture != None:  # node._texture = MtRegion
-      path = node._texture._layers[layeroutput._layer]
+      path = node._texture._layers[layeridx]
       if os.path.exists(path):
         with Image.open(path) as img:
           Image.Image.paste(master, img, (node._rect.left(), node._rect.top()))
 
     if node._child[0] != None:
-      self.copyImages(node._child[0], master, layeroutput)
+      self.copyImages(node._child[0], master, layeridx)
     if node._child[1] != None:
-      self.copyImages(node._child[1], master, layeroutput)
+      self.copyImages(node._child[1], master, layeridx)
 
   def serialize(self, bf: BinaryFile):
-    bf.writeInt32(self._texid)
+    bf.writeInt32(self._islandid)
     bf.writeInt32(self._size)
     bf.writeInt32(self._size)
     bf.writeInt32(len(self._texnames))
@@ -255,26 +240,28 @@ class MtIsland:
       bf.writeString(tn)
 
 class ImagePacker:
-  def packImages(texs, startsize=256, growsize=256):
+  def packImages(regions, startsize=256, growsize=256):
     mega_texs = []
     size = int(startsize)
     growsize = int(growsize)
     maxsize = int(Bake26.c_max_tex_size_px)
+    regions_last = regions[:]
 
     # note you cant get gpu maxsize in headless blender.. we just need to pick a value
-    msg("packing " + str(len(texs)) + " texs. maxsize=" + str(maxsize))
+    msg("packing " + str(len(regions)) + " texs. maxsize=" + str(maxsize))
 
-    cur_tex_id = 1
+    cur_island_id = 1
     while size <= maxsize:
+      regions_cpy = regions_last[:]
       size = min(int(size), int(maxsize))
 
-      pt = ImagePacker.packForSize(texs, size, int(size) == int(maxsize), cur_tex_id)
+      pt = ImagePacker.packForSize(regions_cpy, size, int(size) == int(maxsize), cur_island_id)
 
       if pt != None:
-        pt._id = cur_tex_id
-        cur_tex_id += 1
-        ImagePacker.removePlopped(pt._root, texs)
+        pt._id = cur_island_id
+        cur_island_id += 1
         mega_texs.append(pt)
+        regions_last = regions_cpy[:]
 
         if int(size) == int(maxsize) and Bake26.c_uniform_tex_size == True:
           size = maxsize
@@ -283,69 +270,136 @@ class ImagePacker:
       else:
         size = min(int(size + growsize), maxsize)
 
-      if len(texs) == 0:
+      if len(regions_last) == 0:
         break
+
+    # make sure we pcked everything
+    for region in regions:
+      assert(region._node != None)
 
     return mega_texs
 
-  def packForSize(texs, size, force, tex_id):
+  def packForSize(regions, size, force, island_id):
     pt = MtIsland()
     pt._size = int(size)
-    pt._texid = tex_id
+    pt._islandid = island_id
     pt._root = MtNode()
     pt._root._rect = Box2i()
     pt._root._rect._min = ivec2(0, 0)
     pt._root._rect._max = ivec2(size, size)
 
-    for texpath in texs:
-      texs[texpath]._node = None
-      texs[texpath]._texid = -1
-      # msg("texwh "+str(texs[texpath]._width)+" "+str(texs[texpath]._height))
-      found = pt._root.plop(texs[texpath])
-      if (found != None):
-        texs[texpath]._node = found
-        texs[texpath]._texid = tex_id
+    for ri in range(len(regions)-1, -1, -1):
+      region = regions[ri]
+      region._node = None
+      region._islandid = -1
+      found = pt._root.plop(region)
+      if found != None:
+        region._node = found
+        region._islandid = island_id
+        del regions[ri]
         pt._regioncount += 1
+
+        # set frame info
+        fr = region._frame
+        assert(region._frame != None)
+        fr._islandid = region._islandid
+        fr._x = region._node._rect.left()
+        fr._y = region._node._rect.top()
+        fr._w = region._node._rect.width()
+        fr._h = region._node._rect.height()
+
       else:
         if force:
           return pt
         return None
     return pt
 
-  def removePlopped(node, texs):
-    if node._texture != None:
-      if node._texture._pathColor in texs:
-        assert(texs[node._texture._pathColor]._node == node)
-        del texs[node._texture._pathColor]
-    if node._child[0] != None:
-      ImagePacker.removePlopped(node._child[0], texs)
-    if node._child[1] != None:
-      ImagePacker.removePlopped(node._child[1], texs)
+class b2_datafile:
+  def __init__(self):
+    self._major = -1
+    self._minor = -1
+    self._mtex_w = -1
+    self._mtex_h = -1
+    self._texs = []
+    self._objs = []
+    self._layers = []  # string
 
-class b2_obj:
+  def serialize(self, bf: BinaryFile):
+    bf.writeByte(int(ord('B'.encode('utf-8'))))
+    bf.writeByte(int(ord('2'.encode('utf-8'))))
+    bf.writeByte(int(ord('M'.encode('utf-8'))))
+    bf.writeByte(int(ord('D'.encode('utf-8'))))
+
+    bf.writeInt32(self._major)
+    bf.writeInt32(self._minor)
+    bf.writeInt32(self._mtex_w)
+    bf.writeInt32(self._mtex_h)
+
+    bf.writeInt32(len(self._layers))
+    for la in self._layers:
+      bf.writeString(la)
+
+    bf.writeInt32(len(self._texs))
+    for t in self._texs:
+      t.serialize(bf)
+
+    bf.writeInt32(len(self._objs))
+    for b in self._objs:
+      b.serialize(bf)
+  # def deserialize(self, bf: BinaryFile):
+  #   self._major = bf.readInt32()
+  #   self._minor = bf.readInt32()
+  #   tlen = bf.readInt32()
+  #   for i in range(0, tlen):
+  #     t = b2_mtexdata()
+  #     t.deserialize(bf)
+  #   blen = bf.readInt32()
+  #   for i in range(0, blen):
+  #     b = b2_objdata()
+  #     b.deserialize(bf)
+class b2_mtexdata:
+  _texid: int = -1
+  _w: int = -1
+  _h: int = -1
+  _images = []
+  def serialize(self, bf: BinaryFile):
+    bf.writeInt32(self._texid)
+    bf.writeInt32(self._w)
+    bf.writeInt32(self._h)
+    bf.writeInt32(len(self._images))
+    for img in self._images:
+      bf.writeString(img)
+  def deserialize(self, bf: BinaryFile):
+    self._texid = bf.readInt32()
+    self._w = bf.readInt32()
+    self._h = bf.readInt32()
+    imlen = bf.readInt32()
+    for i in range(0, imlen):
+      self._images.append(bf.readString())
+class b2_objdata:
   _ob_idgen = 1
   def __init__(self):
-    self._id = -1
+    self._id: int = -1
     self._name = ""
-    self._framerate = 0
+    self._fps: float = 0
     self._actions = []
   def serialize(self, bf: BinaryFile):
     bf.writeInt32(self._id)
     bf.writeString(self._name)
-    bf.writeInt32(self._framerate)
+    bf.writeFloat(self._fps)
     bf.writeInt32(len(self._actions))
-    for i in range(0,len(self._actions)):
+    for i in range(0, len(self._actions)):
       self._actions[i].serialize(bf)
   def deserialize(self, bf: BinaryFile):
     self._id = bf.readInt32()
     self._name = bf.readString()
-    self._framerate = bf.readInt32()
+    self._fps = bf.readFloat()
     alen = bf.readInt32()
     for i in range(0, alen):
-      a = b2_action()
+      a = b2_actiondata()
       a.deserialize(bf)
       self._actions.append(a)
-class b2_action:
+class b2_actiondata:
   def __init__(self):
     self._id = -1
     self._name = ""
@@ -354,28 +408,28 @@ class b2_action:
     bf.writeInt32(self._id)
     bf.writeString(self._name)
     bf.writeInt32(len(self._frames))
-    for i in range(0,len(self._frames)):
+    for i in range(0, len(self._frames)):
       self._frames[i].serialize(bf)
   def deserialize(self, bf: BinaryFile):
     self._id = bf.readInt32()
     self._name = bf.readString()
     flen = bf.readInt32()
     for i in range(0, flen):
-      f = b2_frame()
+      f = b2_framedata()
       f.deserialize(bf)
       self._frames.append(f)
-class b2_frame:
+class b2_framedata:
   def __init__(self):
     self._seq: float = -1  # float
-    self._texid: int = -1
+    self._islandid: int = -1
     self._x: int = -1
     self._y: int = -1
     self._w: int = -1
     self._h: int = -1
-    self._imgs = []  # temp just for objs
+    self._imgs = []  # abs path to layers, temp
   def serialize(self, bf: BinaryFile):
     bf.writeFloat(self._seq)
-    bf.writeInt32(self._texid)
+    bf.writeInt32(self._islandid)
     bf.writeInt32(self._x)
     bf.writeInt32(self._y)
     bf.writeInt32(self._w)
@@ -383,17 +437,17 @@ class b2_frame:
     bf.writeInt32(len(self._imgs))
     for img in self._imgs:
       bf.writeString(img)
-
   def deserialize(self, bf: BinaryFile):
     self._seq = bf.readFloat()
-    self._texid = bf.readInt32()
+    self._islandid = bf.readInt32()
     self._x = bf.readInt32()
     self._y = bf.readInt32()
     self._w = bf.readInt32()
     self._h = bf.readInt32()
     ilen = bf.readInt32()
+    # msg(str(self._seq) + " " + str(self._islandid) + " " + str(self._x) + " " + str(self._y) + " " + str(self._w) + " " + str(self._h) + " ")
     for i in range(0, ilen):
-      self.imgs.append(bf.readString())
+      self._imgs.append(bf.readString())
 
 class ActionInfo:
   def __init__(self):
@@ -426,7 +480,7 @@ class RenderInfo:
   _edge_thicknes: float = 0.8  # 0=minimal edge 1 = maximal edge
   _edge_blur: float = 0.4  # 0= no blur edges 1 = full blur edges
 
-  #temp (computed)
+  # temp (computed)
   _render_width: int = 0
   _render_height: int = 0
   _camera = None
@@ -449,14 +503,15 @@ class Bake26:
   c_backupDirName = 'backup'
   c_metafile_version_major = 0
   c_metafile_version_minor = 2
-  c_bobj_binext='.bobj.bin'
+  c_bobj_binext = '.bobj.bin'
   c_max_tex_size_px = int(2048)
   c_uniform_tex_size = True  # TextureArrays cant be variable sizes this must always be true
+  c_B2MT_prefix = 'B2MT'
 
   c_layers = [
     LayerOutput(ExportLayer.Color, ExportFormat.PNG, 8),
     LayerOutput(ExportLayer.DepthNormal, ExportFormat.PNG, 8),
-    #LayerOutput(ExportLayer.Position, ExportFormat.PNG, 16),
+    # LayerOutput(ExportLayer.Position, ExportFormat.PNG, 16),
     ]
 
   @staticmethod
@@ -477,10 +532,21 @@ class Bake26:
     self._doGif = True if args.do_gif else False
     self._doVid = True if args.do_vid else False
 
-    if args.pack_only:
-      self.packTextures(args.outpath)
-    else:
+    # settings check
+    assert(len(Bake26.c_layers) >0)
+
+    if not args.pack_only:
       self.export_files(args)
+
+    if args.pack_enable:
+      mdbin = True
+      mdjson = False
+      if args.genmd_json and not args.genmd_bin:
+        mdbin = False
+        mdjson = True
+      elif args.genmd_json:
+        mdjson = True
+      self.packTextures(args.outpath, mdjson, mdbin)
 
   def export_files(self, args):
     args.libpath = os.path.normpath(args.libpath)
@@ -496,8 +562,8 @@ class Bake26:
     if not self._is_cmd:
       throw("can only run from terminal for now")
 
-    # blender is crashing doing multiple files, so we're going to do subprocess and re-enter this script with the .blend
     if os.path.isfile(args.inpath):
+      # export single file
       self._fileObjName, fe = os.path.splitext(os.path.basename(args.inpath))
       bpy.ops.wm.open_mainfile(filepath=args.inpath)
       self.appendLibData()
@@ -506,6 +572,7 @@ class Bake26:
       # bpy.ops.wm.quit_blender() #?? crashing
       # msg(str(bpy.data.filepath))
     else:
+      # blender is crashing with multiple files, so this launches a subprocess with the .blend
       def asyncExportBlend(fpath):
         if fpath != self._libFile:
           cmd = ""
@@ -518,8 +585,6 @@ class Bake26:
               cmd = sys.argv[i]
           subprocess.run(cmd, shell=True)
       Utils.loopFilesByExt(args.inpath, '.blend', asyncExportBlend)
-      if args.pack_enable:
-        self.packTextures(args.outpath)
 
   def appendLibData(self):
     msg("lib=" + self._libFile)
@@ -621,14 +686,14 @@ class Bake26:
     bpy.context.scene.render.use_motion_blur = False
     bpy.context.scene.render.use_stamp = False
     bpy.context.scene.render.use_persistent_data = True  # supposed to make animation renders faster
-    #bpy.context.scene.render.use_overwrite = True
+    # bpy.context.scene.render.use_overwrite = True
     bpy.context.scene.render.use_compositing = True
     bpy.context.scene.render.use_sequencer = False
     bpy.context.scene.render.threads_mode = 'FIXED'  # typically blender wont use all threads, but we want to use all threads except for 1
     bpy.context.scene.render.threads = max(multiprocessing.cpu_count()-2, 1)
-    #bpy.context.scene.render.use_high_quality_normals = False
-    #bpy.context.scene.render.use_simplify = False
-    #bpy.context.scene.render.use_placeholder = True
+    # bpy.context.scene.render.use_high_quality_normals = False
+    # bpy.context.scene.render.use_simplify = False
+    # bpy.context.scene.render.use_placeholder = True
     bpy.context.scene.render.filepath = ''
     bpy.context.scene.render.use_file_extension = False
 
@@ -798,11 +863,12 @@ class Bake26:
     return inf
 
   def renderAnimations(self, inf):
-    b2ob = b2_obj()
+    b2ob = b2_objdata()
     b2ob._name = inf._name
+    b2ob._fps = float(bpy.context.scene.render.fps) / float(self._data._sampleRate)
 
     def renderob(frame: float, actioninf):
-      b2a = b2_action()
+      b2a = b2_actiondata()
       b2a._name = actioninf._name
       b2a._id = len(b2ob._actions)+1
       b2ob._actions.append(b2a)
@@ -893,7 +959,7 @@ class Bake26:
 
   def exportPreview(self, obname, actname):
     path = self.actionOutputPath(obname, actname)
-    #msg("path="+str(path))
+    # msg("path="+str(path))
     assert(os.path.exists(path))
     colorout = Bake26.getOutput(ExportLayer.Color)
     if colorout == None:
@@ -929,7 +995,7 @@ class Bake26:
     msg("cmd=" + cmd)
     subprocess.run(cmd, shell=True)
 
-  def renderAngles(self, actioninf, obname, frame: float, act: b2_action):
+  def renderAngles(self, actioninf, obname, frame: float, act: b2_actiondata):
     if self._data._azumith_slices > 0:
       rot_mat = Matrix.Rotation((Utils.M_2PI / float(self._data._azumith_slices)), 4, 'Z')
 
@@ -950,14 +1016,14 @@ class Bake26:
 
         self.renderAction(actioninf, obname, frame, azumith, zenith, act)
 
-  def renderAction(self, actioninf, obname, frame: float, azumith, zenith, act: b2_action):
+  def renderAction(self, actioninf, obname, frame: float, azumith, zenith, act: b2_actiondata):
     fpath = self.actionFilePath(obname, actioninf._name, frame, azumith, zenith)
 
     # blender's paths are just screwed up sorry to say. possible bug.
     # chdir to root then add the // relpath for blender
     # blender removes the relpath and appends the path to root
     # note: blender reports output as 'home/' without root
-    b2f = b2_frame()
+    b2f = b2_framedata()
     b2f._seq = frame
     act._frames.append(b2f)
 
@@ -969,7 +1035,7 @@ class Bake26:
 
     for out in Bake26.c_layers:
       abs_path = fpath + out.layer_ext()
-      #rel_path = bpy.path.relpath(rel_path)
+      # rel_path = bpy.path.relpath(rel_path)
       cnode = self._data._compNodes[out._layer]
       cnode.base_path = ''
       cnode.file_slots[0].path = '//' + abs_path
@@ -1028,204 +1094,114 @@ class Bake26:
   def spritePathSeparator():
     return "@"  # could use |
 
-  def packTextures(self, outpath):
-    texs = dict()
+  def packTextures(self, outpath, mdjson, mdbin):
     outpath = os.path.abspath(outpath)
-
-    #throw("TODO: gatherObjs and use their texture strings")
+    regions = []
     objs = []
-    Bake26.gatherObjs(outpath, objs)  # skip /output because we put the mt's in there
+    Bake26.readMetadata(outpath, objs, regions)  # skip /output because we put the mt's in there
 
-    #Bake26.gatherTextures(outpath, texs, True)  # skip /output because we put the mt's in there
+    if len(regions) == 0:
+      throw("no tex regions found. exporter must be run")
+    if len(objs) == 0:
+      throw("no objs '.bin' found. exporter must be run")
 
-    if len(texs) == 0:
-      throw("no textures found. exporter must be run")
-
-    texs_cpy = dict(texs)
-    pts = ImagePacker.packImages(texs)
+    pts = ImagePacker.packImages(regions)
 
     for pt in pts:
-      #msg("writing " + " id=" + str(pt._id) + " count=" + str(pt._regioncount) + " size=" + str(pt._size))
+      # msg("writing " + " id=" + str(pt._id) + " count=" + str(pt._regioncount) + " size=" + str(pt._size))
       pt.compose(outpath)
-    self.writeMetadata(outpath, texs_cpy, pts)
+    self.writeMetadata(outpath, objs, pts, mdjson, mdbin)
 
-  def writeMetadata(self, outpath, texs, pts):
-    mdpath = os.path.join(outpath, "B2MT.bin")
-    msg("saving metadata path="+mdpath)
+  def writeMetadata(self, outpath, objs, pts, mdjson, mdbin):
+    df = b2_datafile()
+    df._major = self.c_metafile_version_major
+    df._minor = self.c_metafile_version_minor
+    df._objs = objs
 
-    #obj_dict = {}
+    df._layers = [layer._layer for layer in Bake26.c_layers]
 
-    # build objects
-    #for region_fname in texs:
-    #  region = texs[region_fname]
-    #  assert(region._node != None)  # call this AFTER  build the nodetree
-    throw("TODO")
-#
-    #  # **TODO: we ar3e getting rid of this in favor of just saving the obj metadata
-    #  Bake26.buildB2Obj(region, region_fname, obj_dict)
+    assert(len(pts) > 0)
+    df._mtex_w = pts[0]._size
+    df._mtex_h = pts[0]._size
 
-    # write file
-    with open(mdpath, 'wb') as file:
-      bf = BinaryFile(file)
+    for pt in pts:
+      mt = b2_mtexdata()
+      mt._texid = pt._islandid
+      mt._w = pt._size
+      mt._h = pt._size
+      mt._images = pt._texnames
+      df._texs.append(mt)
 
-      bf.writeByte(int(ord('B'.encode('utf-8'))))
-      bf.writeByte(int(ord('2'.encode('utf-8'))))
-      bf.writeByte(int(ord('M'.encode('utf-8'))))
-      bf.writeByte(int(ord('D'.encode('utf-8'))))
+    # BIN
+    if mdbin == True:
+      mdpath = os.path.join(outpath, Bake26.c_B2MT_prefix + ".bin")
+      msg("saving metadata path="+mdpath)
+      with BinaryFile.openWrite(mdpath) as bf:
+        df.serialize(bf)
 
-      bf.writeInt32(self.c_metafile_version_major)
-      bf.writeInt32(self.c_metafile_version_minor)
+    # JSON
+    if mdjson == True:
+      mdpath = os.path.join(outpath, Bake26.c_B2MT_prefix + ".json")
+      msg("saving metadata path="+mdpath)
+      with open(mdpath, 'w') as f:
+        f.write(Utils.toJson(df))
 
-      bf.writeInt32(bpy.context.scene.render.fps)
-      bf.writeInt32(Bake26.bpy.context.scene.render.fps)
-
-
-      # texs
-      bf.writeInt32(len(pts))
-      for i in range(0, len(pts)):
-        pts[i].serialize(bf)
-
-      # objs
-      throw("TODO")
-      # bf.writeInt32(len(obj_dict))
-      # for obname in obj_dict:
-      #   ob = obj_dict[obname]
-      #   ob.serialize(bf)
-
-  def writeObjMetadata(self, ob):
+  def writeObjMetadata(self, ob: b2_objdata):
     # post render metadata write
-    fpath = self.objectOutputPath(ob._name, False, 0)
-    fpath = os.path.join(fpath, ob._name + Bake26.c_bobj_binext)
+    fdir = self.objectOutputPath(ob._name, False, 0)
+    fpath = os.path.join(fdir, ob._name + Bake26.c_bobj_binext)
+    # fpath = os.path.join(fdir, ob._name + '.json')
     msg("saving obj metadata to " + fpath)
 
-    with open(fpath, 'wb') as file:
-      bf = BinaryFile(file)
+    with BinaryFile.openWrite(fpath) as bf:
       ob.serialize(bf)
+    # with open(fpath, 'w') as ff:
+    #  s = Utils.toJson(ob)
+    #  ff.write(s)
 
-  def gatherObjs(fpath: str, objs : list):  # , color_extension: str, layers: dict
+  def readMetadata(fpath: str, objs: list, regions: dict):
+    # deserialize all obj .bin files
     fpath = os.path.abspath(fpath)
-    fds = os.listdir(fpath)  # get all files' and folders' names in the current directory
+    fds = os.listdir(fpath)
 
     for item in fds:
-      file_path = os.path.join(fpath, item)
+      item_path = os.path.join(fpath, item)
+      if os.path.isfile(item_path):
+        fname, fext = os.path.splitext(item_path)
+        # if (fext == '.json') and (Bake26.c_B2MT_prefix not in fname):
+        if Bake26.c_bobj_binext in item_path:
+          ob = b2_objdata()
 
-      if os.path.isfile(file_path):
-        if Bake26.c_bobj_binext in file_path:
-          with open(file_path, 'wb') as file:
-            bf = BinaryFile(file)
-            ob = b2_obj ()
+          msg("reading obj md " + item_path)
+
+          with BinaryFile.openRead(item_path) as bf:  # open(item_path, 'rb') as file:
             ob.deserialize(bf)
-            objs.append(ob)
-            throw("TODO")
-#           layer_ext = LayerOutput.parse_extension(item)
-# 
-#           if layer_ext != None:
-#             if layer_ext == color_extension:
-#               w, h = Utils.get_image_size(file_path)
-#               assert(w > 0)
-#               assert(h > 0)
-#               texs[file_path] = MtRegion()
-#               texs[file_path]._pathColor = file_path
-#               texs[file_path]._width = int(w)
-#               texs[file_path]._height = int(h)
-#               texs[file_path]._texid = -1
-#               texs[file_path]._node = None
-#               texs[file_path]._layers = {}
-# 
-#               for output in Bake26.c_layers:
-#                 out_layer_ext = output.layer_ext()
-#                 layer_path = file_path.replace(layer_ext, out_layer_ext)
-#                 texs[file_path]._layers[output._layer] = layer_path
 
+          objs.append(ob)
 
-      elif os.path.isdir(file_path):
+          for act in ob._actions:
+            for fr in act._frames:
+              assert(len(fr._imgs) == len(Bake26.c_layers))
+              colpath = fr._imgs[0]
+              w, h = Utils.get_image_size(colpath)
+              assert(w > 0)
+              assert(h > 0)
+              mtr = MtRegion()
+              regions.append(mtr)
+              mtr._width = int(w)
+              mtr._height = int(h)
+              mtr._islandid = -1
+              mtr._node = None
+              mtr._layers = []
+              for li in range(0, len(fr._imgs)):
+                impath = fr._imgs[li]
+                mtr._layers.append(impath)
+              mtr._frame = fr
+              fr._imgs = []  # clear temp images strings
+
+      elif os.path.isdir(item_path):
         if item != '.' and not Bake26.c_backupDirName in item:
-          Bake26.gatherTextures(file_path, objs)
-
-#   def buildB2Obj(region: MtRegion, region_fname: str, obj_dict: dict):
-#     sep = Bake26.spritePathSeparator()
-#     grp = '([^'+sep+']+)'
-#     # parse name
-#     rxstr = Bake26.c_OBNM
-#     rxstr += sep + grp  # ob 0
-#     rxstr += sep + grp  # act 1
-#     rxstr += sep + grp  # a 2
-#     rxstr += sep + grp  # z 3
-#     rxstr += sep + grp  # ifr 4
-#     rxstr += sep + grp  # ffr 5
-#     rxstr += sep + '(.+)'  # ext 6
-#     # msg("fname="+region_fname)
-#     # msg("rxstr="+rxstr)
-#     fname = os.path.basename(region_fname)
-#     rx = re.search(rxstr, fname)
-#
-#     if (not rx) or (len(rx.groups()) != 7):
-#       raise Exception("Invalid file format group count ="+str(len(rx.groups())))
-#
-#     obname = rx.groups()[0]
-#     actname = rx.groups()[1]
-#     ifr = rx.groups()[4]
-#     ffr = rx.groups()[5]
-#
-#     if not obname in obj_dict:
-#       obj = b2_obj()
-#       obj._id = b2_obj._ob_idgen
-#       b2_obj._ob_idgen += 1
-#       obj._name = obname
-#       obj_dict[obname] = obj
-#     obj = obj_dict[obname]
-#     if not actname in obj._actions:
-#       act = b2_action()
-#       act._id = len(obj._actions)+1
-#       act._name = actname
-#       obj._actions[actname] = act
-#     act = obj._actions[actname]
-#     fr = b2_frame()
-#     fr._texid = region._texid
-#     fr._x = region._node._rect.left()
-#     fr._y = region._node._rect.top()
-#     fr._w = region._node._rect.width()
-#     fr._h = region._node._rect.height()
-#     seq_str = ifr+"."+ffr
-#     assert(not seq_str in act._frames)
-#     seq = float(seq_str)  # "0004.200"
-#     fr._seq = seq
-#     act._frames[seq_str] = fr          
-#   def gatherTextures(fpath: str, texs: dict, skipdir: bool):  # , color_extension: str, layers: dict
-#     fpath = os.path.abspath(fpath)
-#     fds = os.listdir(fpath)  # get all files' and folders' names in the current directory
-#     color_extension = Bake26.getOutput(ExportLayer.Color).layer_ext()
-# 
-#     for item in fds:
-# 
-#       file_path = os.path.join(fpath, item)
-# 
-#       if os.path.isfile(file_path):
-#         if skipdir == False:
-# 
-#           layer_ext = LayerOutput.parse_extension(item)
-# 
-#           if layer_ext != None:
-#             if layer_ext == color_extension:
-#               w, h = Utils.get_image_size(file_path)
-#               assert(w > 0)
-#               assert(h > 0)
-#               texs[file_path] = MtRegion()
-#               texs[file_path]._pathColor = file_path
-#               texs[file_path]._width = int(w)
-#               texs[file_path]._height = int(h)
-#               texs[file_path]._texid = -1
-#               texs[file_path]._node = None
-#               texs[file_path]._layers = {}
-# 
-#               for output in Bake26.c_layers:
-#                 out_layer_ext = output.layer_ext()
-#                 layer_path = file_path.replace(layer_ext, out_layer_ext)
-#                 texs[file_path]._layers[output._layer] = layer_path
-# 
-#       elif os.path.isdir(file_path):
-#         if item != '.' and not Bake26.c_backupDirName in item:
-#           Bake26.gatherTextures(file_path, texs, False)
+          Bake26.readMetadata(item_path, objs, regions)
 
 
 # ======================================================================================
@@ -1245,6 +1221,8 @@ def getArgs():
   parser.add_argument("-P", dest="pack_only", action='store_true', required=False, help="only pack textures in -o, dont export")
   parser.add_argument("-v", dest="do_vid", action='store_true', required=False, help="generate video preview of animation")
   parser.add_argument("-g", dest="do_gif", action='store_true', required=False, help="generate gif preview of animation")
+  parser.add_argument("-gj", dest="genmd_json", action='store_true', required=False, help="generate JSON  metadata")
+  parser.add_argument("-gb", dest="genmd_bin", action='store_true', required=False, help="generate BIN metadata")
   args = parser.parse_args(argv)
   return args
 

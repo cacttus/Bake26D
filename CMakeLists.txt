@@ -1,6 +1,6 @@
 
 cmake_minimum_required(VERSION 3.0.0)
-set(CMAKE_CXX_STANDARD 20)
+set(CMAKE_CXX_STANDARD 23)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 set(PRJ_NAME testapp)
@@ -15,13 +15,14 @@ add_executable(${PRJ_NAME_EXE} ${PRJ_SOURCE_FILES} ${PRJ_HEADER_FILES})
 
 #find_package(glfw REQUIRED)
 #find_package(PkgConfig REQUIRED)
-set(OpenGL_GL_PREFERENCE GLVND)#LEGACY) #GLVND) #GLVND or LEGACY
+set(OpenGL_GL_PREFERENCE GLVND) #GLVND or LEGACY
 find_package(OpenGL REQUIRED)
 find_package(GLEW REQUIRED) 
 find_package(glfw3 REQUIRED)
 find_package(glm REQUIRED)
-find_package(Threads REQUIRED) #This is better than -pthread
-
+find_package(Threads REQUIRED)
+#find_package(PkgConfig REQUIRED)
+#pkg_check_modules(JSONCPP jsoncpp)
 
 set(PRJ_BIN_DIR ${CMAKE_CURRENT_SOURCE_DIR}/bin/${CMAKE_BUILD_TYPE}/)
 set(PRJ_LIB_DIR ${CMAKE_CURRENT_SOURCE_DIR}/bin/${CMAKE_BUILD_TYPE}/)
@@ -29,7 +30,6 @@ set(PRJ_LIB_DIR ${CMAKE_CURRENT_SOURCE_DIR}/bin/${CMAKE_BUILD_TYPE}/)
 #install mono-devel
 #pkg_check_modules(MONO REQUIRED mono)
 # Includes
-#target_include_directories(${PRJ_NAME} PUBLIC ${INCLUDE_DIRECTORIES} ${MONO_INCLUDEDIR})
 #get_target_property(TMP_DIRS ${PRJ_NAME} INCLUDE_DIRECTORIES)
 #message("includedirs=" ${TMP_DIRS})
 
@@ -80,10 +80,11 @@ function(configure_target targetname)
     set(PRJ_ADDL_LIBS ${PRJ_ADDL_LIBS} ncurses)
   endif() 
   target_link_directories(${targetname} PRIVATE ${PRJ_LIB_DIR})
-  target_link_libraries(${targetname} PRIVATE  ${GLFW_LIBRARIES} ${GLEW_LIBRARIES} ${OPENGL_LIBRARIES} ${PRJ_ADDL_LIBS} ${X11_LIBRARIES})
+  target_link_libraries(${targetname} PRIVATE  ${GLFW_LIBRARIES} ${GLEW_LIBRARIES} ${OPENGL_LIBRARIES} ${PRJ_ADDL_LIBS} ${X11_LIBRARIES} ${JSONCPP_LIBRARIES})
+  target_include_directories(${targetname} PUBLIC ${INCLUDE_DIRECTORIES} ${JSONCPP_INCLUDEDIR})
 endfunction()
 
-message("LIBSSS=" ${GLFW_LIBRARIES} ${GLEW_LIBRARIES} ${OPENGL_LIBRARIES} ${PRJ_ADDL_LIBS} ${X11_LIBRARIES})
+#message("LIBSSS=" ${GLFW_LIBRARIES} ${GLEW_LIBRARIES} ${OPENGL_LIBRARIES} ${PRJ_ADDL_LIBS} ${X11_LIBRARIES} ${JSONCPP_LIBRARIES})
 
 configure_target(${PRJ_NAME_EXE})
 #configure_target(${PRJ_NAME_LIB})

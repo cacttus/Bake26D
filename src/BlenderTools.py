@@ -14,6 +14,8 @@ import struct
 import imghdr
 import bpy
 from mathutils import Vector, Matrix, Euler
+import json
+from types import SimpleNamespace
 
 # region fwddcl
 class ivec2: pass  # nopep8
@@ -112,8 +114,29 @@ class FileBlock:
     self._data = None
     self._compressed: bool = False
     self._crc: int = 0
-    
+
 class BinaryFile:
+  c_buffering = 256
+  @staticmethod
+  def openRead(path):
+    ff = open(path, 'rb', BinaryFile.c_buffering)
+    bf = BinaryFile(ff)
+    return bf
+  @staticmethod
+  def openWrite(path):
+    ff = open(path, 'wb', BinaryFile.c_buffering)
+    bf = BinaryFile(ff)
+    return bf
+
+  def __enter__(self):
+    assert(self._binFile != None)
+    self._binFile.__enter__()
+    return self
+
+  def __exit__(self, exc_type, exc_val, exc_tb):
+    assert(self._binFile != None)
+    self._binFile.__exit__(exc_type, exc_val, exc_tb)
+
   def __init__(self, file):
     assert(file != None)
     self._binFile = file
@@ -125,12 +148,6 @@ class BinaryFile:
   def bytesWritten(self): return self._bytesWritten
   def bytesRead(self): return self._bytesRead
 
-  def writeData(self, data: bytearray):
-    if self._block != None:
-      self._block.extend(data)
-    else:
-      self._binFile.write(data)
-      self._bytesWritten += len(data)
   def readData(self, count: int):
     if self._block != None:  # reads some quantity of data and returns it as a string (in text mode) or bytes object (in binary mode).
       arr = self._block[:count]
@@ -139,32 +156,49 @@ class BinaryFile:
       return arr
       #Arrays.copyOfRange(myArray, 5, 10);
     else:
-      bytesob = self._binFile.read(count)
+      # msg("_binFile="+str(self._binFile))
+      # msg("br="+str(dir(self._binFile)))
+      #msg("readable="+str(self._binFile.readable())+" closed="+str(self._binFile.closed)+" tell="+str(self._binFile.tell()))
+      buf = bytearray(count)
+      size = self._binFile.readinto(buf)
+      #msg("size="+str(size)+" count="+str(count))
+      assert(size == count)
+      # msg("count="+str(count))
+      # msg("buf="+str(buf))
+      # msg("buflen="+str(len(buf)))
       self._bytesRead += count
-      return bytesob
-
+      return buf
+  def readDataType(self, dtype: str):
+    # dbg("dtype="+str(dtype))
+    dsize = struct.calcsize(dtype)
+    # dbg("dsize="+str(dsize))
+    buf = self.readData(dsize)
+    # dbg("buflen="+str(len(buf)))
+    res = struct.unpack(dtype, buf)
+    assert(len(res) == 1)
+    # dbg("res="+str(res))
+    return res[0]
   def readBool(self):
-    return self.readData(struct.unpack('?'))
+    return self.readDataType('?')
   def readByte(self):
-    return self.readData(struct.unpack('B'))
+    return self.readDataType('B')
   def readInt16(self):
-    return self.readData(struct.unpack('h'))
+    return self.readDataType('h')
   def readUInt16(self):
-    return self.readData(struct.unpack('H'))
+    return self.readDataType('H')
   def readInt32(self):
-    return self.readData(struct.unpack('i'))
+    return self.readDataType('i')
   def readUInt32(self):
-    return self.readData(struct.unpack('I'))
+    return self.readDataType('I')
   def readInt64(self):
-    return self.readData(struct.unpack('q'))
+    return self.readDataType('q')
   def readUInt64(self):
-    return self.readData(struct.unpack('Q'))
+    return self.readDataType('Q')
   def readFloat(self):
-    return self.readData(struct.unpack('f'))
+    return self.readDataType('f')
   def readDouble(self):
-    return self.readData(struct.unpack('d'))
+    return self.readDataType('d')
   def readString(self):
-    # https://docs.python.org/3/library/struct.html
     len = self.readInt32()
     return str(self.readData(len), 'utf-8')
   def readMat4(self):
@@ -200,10 +234,7 @@ class BinaryFile:
     self.readVec4(val)
     return val
   def readBlock(self):
-    #TODO: Test this
-    #TODO: Test this
-    #TODO: Test this
-    #TODO: Test this
+    throw("TODO: test")
     b = FileBlock()
     b._name = self.readString()
     b._compressed = self.readBool()  # Always compressing blocks in this one
@@ -216,6 +247,12 @@ class BinaryFile:
       throw("File read error: Block " + b._name + " CRC mismatch.")
     self._block = b._data
 
+  def writeData(self, data: bytearray):
+    if self._block != None:
+      self._block.extend(data)
+    else:
+      self._binFile.write(data)
+      self._bytesWritten += len(data)
   def writeBool(self, val: bool):
     self.writeData(struct.pack('?', val))
   def writeByte(self, val: int):
@@ -347,6 +384,17 @@ class Utils:
   # blender utilities
   M_2PI = float(math.pi * 2)
 
+  @staticmethod
+  def toJson(obj):
+    return json.dumps(obj, default=lambda o: o.__dict__, indent=2)
+    # json.dumps(obj, *, skipkeys=False, ensure_ascii=True, check_circular=True, allow_nan=True, cls=None, indent=None, separators=None, default=None, sort_keys=False, **kw)
+    
+  @staticmethod
+  def fromJson(s: str):
+    x = json.loads(s, object_hook=lambda d: SimpleNamespace(**d))
+    return x  # json.loads(s)
+
+  @staticmethod
   def loopFilesByExt(inpath, ext, func):
     inpath = os.path.normpath(inpath)
     for f in os.listdir(inpath):
@@ -356,6 +404,7 @@ class Utils:
         if fe == ext:
           func(fpath)
 
+  @staticmethod
   def getWorldBoundBox(ob):
     w_verts = [ob.matrix_world @ Vector(v) for v in ob.bound_box]
     vmax = Vector([-sys.float_info.max, -sys.float_info.max, -sys.float_info.max])
@@ -372,6 +421,7 @@ class Utils:
     bb.validate()
     return bb
 
+  @staticmethod
   def enclosingBoundBox(obs):
     bb = BoundBox.zero()
     bb.genReset()
@@ -388,17 +438,20 @@ class Utils:
       msg("v=" + str(obb.volume()) + " bbv=" + str(bb.volume()))
     return bb
 
+  @staticmethod
   def assertBlendFileExists(file):
     if not file:
       throw("No blend file specified.")
     elif not os.path.exists(file):
       throw("blend file path '" + file + "' not found.")
 
+  @staticmethod
   def set_frame(sample):
     # frame_set is slowest this method comes first
     bpy.context.scene.frame_set(int(sample), subframe=math.fmod(sample, 1))
     bpy.context.view_layer.update()
 
+  @staticmethod
   def getMinKeyframeForAction(curAction):
     iRet = 9999999
     for fcu in curAction.fcurves:
@@ -408,6 +461,7 @@ class Utils:
           iRet = x
     return int(iRet)
 
+  @staticmethod
   def getMaxKeyframeForAction(curAction):
     iRet = -9999999
     for fcu in curAction.fcurves:
@@ -417,12 +471,15 @@ class Utils:
           iRet = x
     return int(iRet)
 
+  @staticmethod
   def active_object():
     return bpy.context.view_layer.objects.active
 
+  @staticmethod
   def blendFileIsOpen():
     return bpy.data.filepath
 
+  @staticmethod
   def get_shader_node_image_input(node):
     img = None
     for input in node.links:
@@ -430,6 +487,7 @@ class Utils:
         img = input.from_node.image
     return img
 
+  @staticmethod
   def printObj(obj):
     if hasattr(obj, '__dict__'):
       for k, v in obj.__dict__.items():
@@ -438,9 +496,11 @@ class Utils:
     else:
       msg(str(dir(obj)))
 
+  @staticmethod
   def millis():
     return int(round(time.time() * 1000))
 
+  @staticmethod
   def debugDumpMatrix(str, in_matrix):
     # return ""
     strDebug = ""
@@ -464,6 +524,7 @@ class Utils:
 
     return strDebug
 
+  @staticmethod
   def getFileInfo():
     # print info aobut .blend file in JSON format
     if bpy.context.mode != 'OBJECT':
@@ -499,6 +560,7 @@ class Utils:
 
     print(strOut)
 
+  @staticmethod
   def printExcept(e):
     extype = type(e)
     tb = e.__traceback__
@@ -513,6 +575,7 @@ class Utils:
     msg(traceback.format_exc())
     sys.exc_clear()
 
+  @staticmethod
   def get_image_size(fname):
     with open(fname, 'rb') as fhandle:
       head = fhandle.read(24)
@@ -547,6 +610,7 @@ class Utils:
       return width, height
 
 class Convert:
+  @staticmethod
   def fPrec(prec=None):
     # global toString fp precision
     if prec == None:
@@ -554,6 +618,7 @@ class Convert:
     else:
       return "%." + str(prec) + "f"
 
+  @staticmethod
   def matToString(mat, delim=',', sp=False):
     strRet = ""
     mat_4 = mat.to_4x4()
@@ -570,35 +635,41 @@ class Convert:
         strRet += "\n"
     return strRet
 
+  @staticmethod
   def floatToString(float, prec=None):
     strFormat = "" + Convert.fPrec(prec) + ""
     strRet = strFormat % (float)
     return strRet
 
+  @staticmethod
   def vec4ToString(vec4, delim=' '):
     strRet = ""
     strFormat = "" + Convert.fPrec() + delim + Convert.fPrec() + delim + Convert.fPrec() + delim + Convert.fPrec() + ""
     strRet = strFormat % (vec4.x, vec4.y, vec4.z, vec4.w)
     return strRet
 
+  @staticmethod
   def vec3ToString(vec3, delim=' '):
     strRet = ""
     strFormat = "" + Convert.fPrec() + delim + Convert.fPrec() + delim + Convert.fPrec() + ""
     strRet = strFormat % (vec3.x, vec3.y, vec3.z)
     return strRet
 
+  @staticmethod
   def color3ToString(vec3, delim=' '):
     strRet = ""
     strFormat = "" + Convert.fPrec() + delim + Convert.fPrec() + delim + Convert.fPrec() + ""
     strRet = strFormat % (vec3.r, vec3.g, vec3.b)
     return strRet
 
+  @staticmethod
   def vec2ToString(vec2, delim=' '):
     strRet = ""
     strFormat = "" + Convert.fPrec() + delim + Convert.fPrec() + ""
     strRet = strFormat % (vec2.x, vec2.y)
     return strRet
 
+  @staticmethod
   def glEuler3(eu, yup):
     # NOTE: use Deep exploration to test- same coordinate system as vault
     # Convert Vec3 tgo OpenGL coords
@@ -613,6 +684,7 @@ class Convert:
     else:
       return eu
 
+  @staticmethod
   def glQuat(quat, yup):
     if yup:  # self._config._convertY_Up:
       e = quat.to_euler()
@@ -621,6 +693,7 @@ class Convert:
     else:
       return quat
 
+  @staticmethod
   def glVec3(vec, yup):
     # NOTE: use Deep exploration to test- same coordinate system as vault
     # Convert Vec3 tgo OpenGL coords
@@ -636,6 +709,7 @@ class Convert:
 
     return ret
 
+  @staticmethod
   def glMat4(in_mat, yup):
     # NOTE this functio works
      # global_matrix = io_utils.axis_conversion(to_forward="-Z", to_up="Y").to_4x4()
