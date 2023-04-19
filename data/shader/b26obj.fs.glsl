@@ -5,7 +5,7 @@ uniform sampler2DArray  _textures;
 
 in vec3 _vertGS;
 in vec2 _texGS;
-flat in uint _mtexidGS;
+flat in uint _iidGS;
 flat in uint _objIDGS;
 flat in float _objScaleZGS;
 
@@ -61,10 +61,8 @@ vec3 lightFragmentBlinnPhong(in vec3 in_vertex, in vec3 in_albedo, in vec3 in_no
 }
 
 void main() {
-  uint layers = 2;
-
-  vec4 col = texture(_textures, vec3(_texGS, _mtexidGS * _ufGpuWorld._mtex_layers + _ufGpuWorld._mtex_color));
-  vec4 nd = texture(_textures, vec3(_texGS,  _mtexidGS * _ufGpuWorld._mtex_layers + _ufGpuWorld._mtex_depthnormal));
+  vec4 col = texture(_textures, vec3(_texGS, _iidGS * _ufGpuWorld._mtex_layers + _ufGpuWorld._mtex_color));
+  vec4 nd = texture(_textures, vec3(_texGS,  _iidGS * _ufGpuWorld._mtex_layers + _ufGpuWorld._mtex_depthnormal));
   
   vec3 n = normalize(nd.xyz * 2 - 1);
   float d = nd.w * 2 - 1;

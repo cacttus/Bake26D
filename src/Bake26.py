@@ -58,9 +58,9 @@ class MtRegion: pass  # nopep8
 class MtNode: pass  # nopep8
 class MtIsland: pass  # nopep8
 class ImagePacker: pass  # nopep8
-class ActionInfo: pass  # nopep8
-class ObjectInfo: pass  # nopep8
 class RenderInfo: pass  # nopep8
+class ObjectInfo: pass  # nopep8
+class ActionInfo: pass  # nopep8
 class ExportSettings: pass  # nopep8
 class Bake26: pass  # nopep8
 
@@ -112,7 +112,7 @@ class MtRegion:
     self._layers = []
     self._width = 0
     self._height = 0
-    self._islandid = -1
+    self._iid = -1
     self._node = None
     self._frame = None
 
@@ -185,7 +185,7 @@ class MtNode:
 class MtIsland:
   # individual texture of a multiple image mega texure
   def __init__(self):
-    self._islandid = 0
+    self._iid = 0
     self._size = 0  # w and h
     self._regioncount = 0
     self._root: MtNode = None
@@ -198,7 +198,7 @@ class MtIsland:
       self.packLayer(outpath, Bake26.c_layers[li], li)
 
   def packLayer(self, outpath, layeroutput: LayerOutput, idx: int):
-    fname = layeroutput.mtex_filename(self._islandid)
+    fname = layeroutput.mtex_filename(self._iid)
     msg("packing layer "+fname+" size="+str(self._size))
 
     cpink = (255, 0, 255, 255)
@@ -232,7 +232,7 @@ class MtIsland:
       self.copyImages(node._child[1], master, layeridx)
 
   def serialize(self, bf: BinaryFile):
-    bf.writeInt32(self._islandid)
+    bf.writeInt32(self._iid)
     bf.writeInt32(self._size)
     bf.writeInt32(self._size)
     bf.writeInt32(len(self._texnames))
@@ -282,7 +282,7 @@ class ImagePacker:
   def packForSize(regions, size, force, island_id):
     pt = MtIsland()
     pt._size = int(size)
-    pt._islandid = island_id
+    pt._iid = island_id
     pt._root = MtNode()
     pt._root._rect = Box2i()
     pt._root._rect._min = ivec2(0, 0)
@@ -291,18 +291,18 @@ class ImagePacker:
     for ri in range(len(regions)-1, -1, -1):
       region = regions[ri]
       region._node = None
-      region._islandid = -1
+      region._iid = -1
       found = pt._root.plop(region)
       if found != None:
         region._node = found
-        region._islandid = island_id
+        region._iid = island_id
         del regions[ri]
         pt._regioncount += 1
 
         # set frame info
         fr = region._frame
         assert(region._frame != None)
-        fr._islandid = region._islandid
+        fr._iid = region._iid
         fr._x = region._node._rect.left()
         fr._y = region._node._rect.top()
         fr._w = region._node._rect.width()
@@ -315,14 +315,15 @@ class ImagePacker:
     return pt
 
 class b2_datafile:
+  c_magic: int = 1216926865
   def __init__(self):
     self._major = -1
     self._minor = -1
     self._mtex_w = -1
     self._mtex_h = -1
+    self._layers = []  # string
     self._texs = []
     self._objs = []
-    self._layers = []  # string
 
   def serialize(self, bf: BinaryFile):
     bf.writeByte(int(ord('B'.encode('utf-8'))))
@@ -335,6 +336,8 @@ class b2_datafile:
     bf.writeInt32(self._mtex_w)
     bf.writeInt32(self._mtex_h)
 
+    bf.writeInt32(b2_datafile.c_magic)
+
     bf.writeInt32(len(self._layers))
     for la in self._layers:
       bf.writeString(la)
@@ -346,6 +349,9 @@ class b2_datafile:
     bf.writeInt32(len(self._objs))
     for b in self._objs:
       b.serialize(bf)
+
+    bf.writeInt32(b2_datafile.c_magic)
+
   # def deserialize(self, bf: BinaryFile):
   #   self._major = bf.readInt32()
   #   self._minor = bf.readInt32()
@@ -358,22 +364,26 @@ class b2_datafile:
   #     b = b2_objdata()
   #     b.deserialize(bf)
 class b2_mtexdata:
-  _texid: int = -1
+  _iid: int = -1  # island id
   _w: int = -1
   _h: int = -1
   _images = []
   def serialize(self, bf: BinaryFile):
-    bf.writeInt32(self._texid)
+    bf.writeInt32(b2_datafile.c_magic)
+    bf.writeInt32(self._iid)
     bf.writeInt32(self._w)
     bf.writeInt32(self._h)
     bf.writeInt32(len(self._images))
+    bf.writeInt32(b2_datafile.c_magic)
     for img in self._images:
       bf.writeString(img)
   def deserialize(self, bf: BinaryFile):
-    self._texid = bf.readInt32()
+    assert(bf.readInt32() == b2_datafile.c_magic)
+    self._iid = bf.readInt32()
     self._w = bf.readInt32()
     self._h = bf.readInt32()
     imlen = bf.readInt32()
+    assert(bf.readInt32() == b2_datafile.c_magic)
     for i in range(0, imlen):
       self._images.append(bf.readString())
 class b2_objdata:
@@ -384,17 +394,21 @@ class b2_objdata:
     self._fps: float = 0
     self._actions = []
   def serialize(self, bf: BinaryFile):
+    bf.writeInt32(b2_datafile.c_magic)
     bf.writeInt32(self._id)
     bf.writeString(self._name)
     bf.writeFloat(self._fps)
     bf.writeInt32(len(self._actions))
+    bf.writeInt32(b2_datafile.c_magic)
     for i in range(0, len(self._actions)):
       self._actions[i].serialize(bf)
   def deserialize(self, bf: BinaryFile):
+    assert(bf.readInt32() == b2_datafile.c_magic)
     self._id = bf.readInt32()
     self._name = bf.readString()
     self._fps = bf.readFloat()
     alen = bf.readInt32()
+    assert(bf.readInt32() == b2_datafile.c_magic)
     for i in range(0, alen):
       a = b2_actiondata()
       a.deserialize(bf)
@@ -405,72 +419,62 @@ class b2_actiondata:
     self._name = ""
     self._frames = []
   def serialize(self, bf: BinaryFile):
+    bf.writeInt32(b2_datafile.c_magic)
     bf.writeInt32(self._id)
     bf.writeString(self._name)
     bf.writeInt32(len(self._frames))
+    bf.writeInt32(b2_datafile.c_magic)
     for i in range(0, len(self._frames)):
       self._frames[i].serialize(bf)
   def deserialize(self, bf: BinaryFile):
+    assert(bf.readInt32() == b2_datafile.c_magic)
     self._id = bf.readInt32()
     self._name = bf.readString()
     flen = bf.readInt32()
+    assert(bf.readInt32() == b2_datafile.c_magic)
     for i in range(0, flen):
       f = b2_framedata()
       f.deserialize(bf)
       self._frames.append(f)
 class b2_framedata:
   def __init__(self):
-    self._seq: float = -1  # float
-    self._islandid: int = -1
+    self._seq: float = -1
+    self._iid: int = -1  # island id
     self._x: int = -1
     self._y: int = -1
     self._w: int = -1
     self._h: int = -1
     self._imgs = []  # abs path to layers, temp
   def serialize(self, bf: BinaryFile):
+    bf.writeInt32(b2_datafile.c_magic)
     bf.writeFloat(self._seq)
-    bf.writeInt32(self._islandid)
+    bf.writeInt32(self._iid)
     bf.writeInt32(self._x)
     bf.writeInt32(self._y)
     bf.writeInt32(self._w)
     bf.writeInt32(self._h)
     bf.writeInt32(len(self._imgs))
+    bf.writeInt32(b2_datafile.c_magic)
     for img in self._imgs:
       bf.writeString(img)
   def deserialize(self, bf: BinaryFile):
+    assert(bf.readInt32() == b2_datafile.c_magic)
     self._seq = bf.readFloat()
-    self._islandid = bf.readInt32()
+    self._iid = bf.readInt32()
     self._x = bf.readInt32()
     self._y = bf.readInt32()
     self._w = bf.readInt32()
     self._h = bf.readInt32()
     ilen = bf.readInt32()
-    # msg(str(self._seq) + " " + str(self._islandid) + " " + str(self._x) + " " + str(self._y) + " " + str(self._w) + " " + str(self._h) + " ")
+    assert(bf.readInt32() == b2_datafile.c_magic)
+    # msg(str(self._seq) + " " + str(self._iid) + " " + str(self._x) + " " + str(self._y) + " " + str(self._w) + " " + str(self._h) + " ")
     for i in range(0, ilen):
       self._imgs.append(bf.readString())
-
-class ActionInfo:
-  def __init__(self):
-    self._name = ""
-    self._action = None  # if none then this is sprite
-    self._sweepBox = None
-    self._start = 0
-    self._end = 0
-    self._texs: dict = {}
-class ObjectInfo:
-  def __init__(self):
-    self._name = ""
-    self._object = None
-    self._enclosingBox = None
-    self._sweepBox = None  # of all obs and anims
-    self._actions = {}
-    self._min_start = 99999  # of all anims
-    self._max_end = -99999
 
 class RenderInfo:
   _render_engine: RenderEngine = RenderEngine.Eevee
   _render_samples: int = 3  # note at 1 sample there is no edge blur in eevee
-  _render_size: int = 256  # rendered image size, scaled to maximum of w/h dimension
+  _render_size: int = 64  # rendered image size, scaled to maximum of w/h dimension
   _azumith_slices: int = 0
   _zenith_slices: int = 0
   _sampleRate: float = 1
@@ -491,12 +495,32 @@ class RenderInfo:
   _dbg_renderCount = 0
   _compNodes: dict = {}
 
+class ObjectInfo:
+  def __init__(self):
+    self._name = ""
+    self._object = None
+    self._enclosingBox = None
+    self._sweepBox = None  # of all obs and anims
+    self._actions = {}
+    self._min_start = 99999  # of all anims
+    self._max_end = -99999
+    self._b2_obj: b2_objdata = None
+
+class ActionInfo:
+  def __init__(self):
+    self._name = ""
+    self._action = None  # if none then this is sprite
+    self._sweepBox = None
+    self._start = 0
+    self._end = 0
+    self._texs: dict = {}
+    self._b2_action: b2_actiondata = None
+
 class Bake26:
   # region Constants
 
   c_file_version = '0.01'
   c_sprite_name = 'Sprite'
-  c_inputFileSwitch = '-i'
   c_framePlaceholder = "####"
   c_OBNM = 'B26'
 
@@ -513,6 +537,16 @@ class Bake26:
     LayerOutput(ExportLayer.DepthNormal, ExportFormat.PNG, 8),
     # LayerOutput(ExportLayer.Position, ExportFormat.PNG, 16),
     ]
+
+  c_argInput = '-i'
+  c_argOutput = "-o"
+  c_argLibrary = "-l"
+  c_argPack = "-p"
+  c_argPackOnly = "-P"
+  c_argDoVid = "-v"
+  c_argDoGif = "-g"
+  c_argGenMDJson = "-gj"
+  c_argGenMDBin = "-gb"
 
   @staticmethod
   def getOutput(layer: ExportLayer):
@@ -533,12 +567,12 @@ class Bake26:
     self._doVid = True if args.do_vid else False
 
     # settings check
-    assert(len(Bake26.c_layers) >0)
+    assert(len(Bake26.c_layers) > 0)
 
     if not args.pack_only:
       self.export_files(args)
 
-    if args.pack_enable:
+    if args.pack_enable or args.pack_only:
       mdbin = True
       mdjson = False
       if args.genmd_json and not args.genmd_bin:
@@ -575,14 +609,20 @@ class Bake26:
       # blender is crashing with multiple files, so this launches a subprocess with the .blend
       def asyncExportBlend(fpath):
         if fpath != self._libFile:
-          cmd = ""
-          for i in range(0, len(sys.argv)):
-            if i > 0 and sys.argv[i - 1] == Bake26.c_inputFileSwitch:
-              cmd += " " + fpath
-            elif cmd != "":
-              cmd += " " + sys.argv[i]
+          cmd = sys.argv[0]
+          userarg = False
+          for i in range(1, len(sys.argv)):
+            lastarg = sys.argv[i - 1]
+            arg = sys.argv[i]
+            if lastarg == "--":
+              userarg = True
+            elif userarg == True and lastarg == Bake26.c_argInput:
+              cmd += " " + lastarg + " " + fpath
+            elif userarg == True and (arg == Bake26.c_argPack or arg == Bake26.c_argPackOnly):
+              pass
             else:
-              cmd = sys.argv[i]
+              cmd += " " + sys.argv[i]
+          msg("cmd="+cmd)
           subprocess.run(cmd, shell=True)
       Utils.loopFilesByExt(args.inpath, '.blend', asyncExportBlend)
 
@@ -816,11 +856,13 @@ class Bake26:
     inf = ObjectInfo()
 
     render_objs = self.getRenderableObjects()
-
     inf._object = self.getAnimatedObject()
     inf._name = self._fileObjName
     inf._enclosingBox = Utils.enclosingBoundBox(render_objs)
     inf._sweepBox = inf._enclosingBox.clone()
+    inf._b2_obj = b2_objdata()
+    inf._b2_obj._name = self._fileObjName
+    inf._b2_obj._fps = float(bpy.context.scene.render.fps) / float(self._data._sampleRate)
     inf._actions = dict()
     if inf._object != None:
       for nla in inf._object.animation_data.nla_tracks:
@@ -834,6 +876,10 @@ class Bake26:
             ainf._end = action.frame_range[1]
             ainf._sweepBox = BoundBox.zero()
             ainf._sweepBox.genReset()
+            ainf._b2_action = b2_actiondata()
+            ainf._b2_action._name = action.name
+            ainf._b2_action._id = len(inf._b2_obj._actions)+1
+            inf._b2_obj._actions.append(ainf._b2_action)
             inf._min_start = min(inf._min_start, ainf._start)
             inf._max_end = max(inf._max_end, ainf._end)
             inf._actions[ainf._name] = ainf
@@ -863,20 +909,12 @@ class Bake26:
     return inf
 
   def renderAnimations(self, inf):
-    b2ob = b2_objdata()
-    b2ob._name = inf._name
-    b2ob._fps = float(bpy.context.scene.render.fps) / float(self._data._sampleRate)
 
     def renderob(frame: float, actioninf):
-      b2a = b2_actiondata()
-      b2a._name = actioninf._name
-      b2a._id = len(b2ob._actions)+1
-      b2ob._actions.append(b2a)
-
       if self._data._customCamera == False:
-        self.renderAngles(actioninf, inf._name, frame, b2a)
+        self.renderAngles(actioninf, inf._name, frame)
       else:
-        self.renderAction(actioninf, inf._name, 0, 0, 0, b2a)
+        self.renderAction(actioninf, inf._name, 0, 0, 0)
 
     msg("exporting: " + str(inf._min_start) + "-" + str(inf._max_end))
     self.animateObjectActions(inf, renderob)
@@ -885,7 +923,7 @@ class Bake26:
       if actname != Bake26.c_sprite_name:
         self.exportPreview(inf._name, actname)
 
-    self.writeObjMetadata(b2ob)
+    self.writeObjMetadata(inf)
 
   def focusCamera(self, inf):
     bb = inf._sweepBox
@@ -995,7 +1033,7 @@ class Bake26:
     msg("cmd=" + cmd)
     subprocess.run(cmd, shell=True)
 
-  def renderAngles(self, actioninf, obname, frame: float, act: b2_actiondata):
+  def renderAngles(self, actioninf, obname, frame: float):
     if self._data._azumith_slices > 0:
       rot_mat = Matrix.Rotation((Utils.M_2PI / float(self._data._azumith_slices)), 4, 'Z')
 
@@ -1014,9 +1052,9 @@ class Bake26:
         self._data._camera.matrix_world = pmat @ rot_mat
         # msg("mat="+str(self._dummyCamera.matrix_world))
 
-        self.renderAction(actioninf, obname, frame, azumith, zenith, act)
+        self.renderAction(actioninf, obname, frame, azumith, zenith)
 
-  def renderAction(self, actioninf, obname, frame: float, azumith, zenith, act: b2_actiondata):
+  def renderAction(self, actioninf, obname, frame: float, azumith, zenith):
     fpath = self.actionFilePath(obname, actioninf._name, frame, azumith, zenith)
 
     # blender's paths are just screwed up sorry to say. possible bug.
@@ -1025,7 +1063,6 @@ class Bake26:
     # note: blender reports output as 'home/' without root
     b2f = b2_framedata()
     b2f._seq = frame
-    act._frames.append(b2f)
 
     dn = os.path.dirname('/')  # bpy.data.filepath)
     if not os.getcwd() == dn:
@@ -1047,6 +1084,9 @@ class Bake26:
 
     bpy.ops.render.render(write_still=False)  # use only compositor outputs
     self._data._dbg_renderCount += 1
+    
+    assert(actioninf._b2_action != None)
+    actioninf._b2_action._frames.append(b2f)
 
   def objectOutputPath(self, obname, backup, backup_id):
     path = os.path.abspath(os.path.normpath(self._outPath))
@@ -1124,9 +1164,12 @@ class Bake26:
     df._mtex_w = pts[0]._size
     df._mtex_h = pts[0]._size
 
+    for i in range(0,len(objs)):
+      objs[i]._id = i
+
     for pt in pts:
       mt = b2_mtexdata()
-      mt._texid = pt._islandid
+      mt._iid = pt._iid
       mt._w = pt._size
       mt._h = pt._size
       mt._images = pt._texnames
@@ -1146,8 +1189,11 @@ class Bake26:
       with open(mdpath, 'w') as f:
         f.write(Utils.toJson(df))
 
-  def writeObjMetadata(self, ob: b2_objdata):
+  def writeObjMetadata(self, inf: ObjectInfo):
     # post render metadata write
+    ob = inf._b2_obj
+    assert(ob != None)
+
     fdir = self.objectOutputPath(ob._name, False, 0)
     fpath = os.path.join(fdir, ob._name + Bake26.c_bobj_binext)
     # fpath = os.path.join(fdir, ob._name + '.json')
@@ -1190,7 +1236,7 @@ class Bake26:
               regions.append(mtr)
               mtr._width = int(w)
               mtr._height = int(h)
-              mtr._islandid = -1
+              mtr._iid = -1
               mtr._node = None
               mtr._layers = []
               for li in range(0, len(fr._imgs)):
@@ -1206,7 +1252,6 @@ class Bake26:
 
 # ======================================================================================
 
-
 def getArgs():
   argv = sys.argv
   if "--" not in argv:
@@ -1214,15 +1259,15 @@ def getArgs():
   else:
     argv = argv[argv.index("--") + 1:]
   parser = argparse.ArgumentParser(description="MRT sprite baker")
-  parser.add_argument(Bake26.c_inputFileSwitch, dest="inpath", type=str, required=True, help="path to .blend files")
-  parser.add_argument("-o", dest="outpath", type=str, required=True, help="output path")
-  parser.add_argument("-l", dest="libpath", type=str, required=True, help="library file path")
-  parser.add_argument("-p", dest="pack_enable", action='store_true', required=False, help="pack textures in -o")
-  parser.add_argument("-P", dest="pack_only", action='store_true', required=False, help="only pack textures in -o, dont export")
-  parser.add_argument("-v", dest="do_vid", action='store_true', required=False, help="generate video preview of animation")
-  parser.add_argument("-g", dest="do_gif", action='store_true', required=False, help="generate gif preview of animation")
-  parser.add_argument("-gj", dest="genmd_json", action='store_true', required=False, help="generate JSON  metadata")
-  parser.add_argument("-gb", dest="genmd_bin", action='store_true', required=False, help="generate BIN metadata")
+  parser.add_argument(Bake26.c_argInput, dest="inpath", type=str, required=True, help="path to .blend files")
+  parser.add_argument(Bake26.c_argOutput, dest="outpath", type=str, required=True, help="output path")
+  parser.add_argument(Bake26.c_argLibrary, dest="libpath", type=str, required=True, help="library file path")
+  parser.add_argument(Bake26.c_argPack, dest="pack_enable", action='store_true', required=False, help="pack textures in -o")
+  parser.add_argument(Bake26.c_argPackOnly, dest="pack_only", action='store_true', required=False, help="only pack textures in -o, dont export")
+  parser.add_argument(Bake26.c_argDoVid, dest="do_vid", action='store_true', required=False, help="generate video preview of animation")
+  parser.add_argument(Bake26.c_argDoGif, dest="do_gif", action='store_true', required=False, help="generate gif preview of animation")
+  parser.add_argument(Bake26.c_argGenMDJson, dest="genmd_json", action='store_true', required=False, help="generate JSON  metadata")
+  parser.add_argument(Bake26.c_argGenMDBin, dest="genmd_bin", action='store_true', required=False, help="generate BIN metadata")
   args = parser.parse_args(argv)
   return args
 

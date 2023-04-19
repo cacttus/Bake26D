@@ -5,13 +5,13 @@ in uint _objIDVS[];
 
 out vec3 _vertGS;
 out vec2 _texGS;
-flat out uint _mtexidGS;
+flat out uint _iidGS;
 flat out uint _objIDGS;
 flat out float _objScaleZGS;
 
 void setGS() {
   _objIDGS = _objIDVS[0];
-  _mtexidGS = _ufGpuObj[_objIDVS[0]]._mtexid;
+  _iidGS = _ufGpuObj[_objIDVS[0]]._iid;
   mat4 tm = _ufGpuObj[_objIDVS[0]]._mat;
   _objScaleZGS = length(vec3(tm[3][1], tm[3][2], tm[3][3]));
 }

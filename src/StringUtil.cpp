@@ -7,6 +7,7 @@
 // For va_list
 #include <stdarg.h>
 #include <sstream>
+#include <regex>
 
 #include "./testapp.h"
 #include "./StringUtil.h"
@@ -16,13 +17,10 @@
 // #include "../base/Gu.h"
 // #include "../base/OperatingSystem.h"
 
-
 namespace B26D {
 
-StringUtil::StringUtil() {
-}
-StringUtil::~StringUtil() {
-}
+StringUtil::StringUtil() {}
+StringUtil::~StringUtil() {}
 int32_t StringUtil::compare(const string_t& a, const string_t& b) {
   return a.compare(b);
 }
@@ -346,17 +344,10 @@ bool StringUtil::isChar(char c) {
   return r != 0;
 }
 bool StringUtil::isWs(int c) {
-  return (
-      (c == ' ') ||
-      (c == '\t') ||
-      (c == '\r') ||
-      (c == '\n'));
+  return ((c == ' ') || (c == '\t') || (c == '\r') || (c == '\n'));
 }
 bool StringUtil::isWsExceptNewline(char c) {
-  return (
-      (c == ' ') ||
-      (c == '\t') ||
-      (c == '\r'));
+  return ((c == ' ') || (c == '\t') || (c == '\r'));
 }
 string_t StringUtil::getEscapedCharLiteral(char c) {
   if (c <= 8) {
@@ -509,7 +500,6 @@ string_t StringUtil::removeNewline(const string_t& str) {
 
   return out;
 }
-
 string_t StringUtil::appendLine(string_t& str, const string_t& toAppend) {
   str = str + toAppend + OperatingSystem::newline();
   return str;
@@ -531,27 +521,22 @@ bool StringUtil::contains(const string_t& a, const string_t& b) {
 bool StringUtil::contains(const wstring_t& a, const wstring_t& b) {
   return a.find(b) != std::wstring::npos;
 }
-// warning: passing an object of reference type to 'va_start' has undefined behavior
-string_t StringUtil::format(const string_t aft, ...) {
-  string_t strRet;
+string_t StringUtil::format(string_t format, ...) {
+  // warning: passing an object of reference type to 'va_start' has undefined behavior
   va_list args;
-  va_start(args, aft);
-  strRet = formatVa(aft, args);
+  va_start(args, format);
+  string_t strRet;
+  int ct = vsnprintf(nullptr, 0, format.c_str(), args);
   va_end(args);
-  return strRet;
-}
-string_t StringUtil::formatVa(const string_t& aft, va_list args) {
-  string_t strRet = "";
-  // he vsnprintf function returns the number of characters written, not counting the terminating null character.
-  int nCount = vsnprintf(nullptr, 0, aft.c_str(), args);
 
-  if (nCount == 0) {
-    // Empty, no format
-  }
-  else {
-    std::unique_ptr<char[]> tmp(new char[nCount]);
-    vsnprintf(tmp.get(), nCount, aft.c_str(), args);
-    strRet = string_t((char*)tmp.get(), nCount);
+  if (ct >= 0) {
+    va_list args2;
+    va_start(args2, format);
+    char* buf = new char[ct + 1];
+    int count2 = vsnprintf(buf, ct + 1, format.c_str(), args2);
+    strRet = string_t(buf, count2);
+    delete[] buf;
+    va_end(args2);
   }
 
   return strRet;
@@ -635,9 +620,56 @@ bool StringUtil::startsWith(const string_t& str, const string_t& sub) {
   return ret;
 }
 bool StringUtil::endsWith(const std::string& str, const std::string& sub) {
-  bool ret = (sub.length() <= str.length()) &&
-             (str.rfind(sub) + sub.length() == str.length());
+  bool ret = (sub.length() <= str.length()) && (str.rfind(sub) + sub.length() == str.length());
   return ret;
+}
+
+string_t StringUtil::match(const string_t& s, const string_t& regx) {
+  std::regex rex(regx);
+  for (auto ite = std::sregex_iterator(s.begin(), s.end(), rex); ite != std::sregex_iterator(); ite++) {
+    str st = (*ite)[0];
+    return st;
+  }
+  return "";
+}
+std::vector<string_t> StringUtil::matches(const string_t& s, const string_t& regx) {
+  std::vector<string_t> v;
+  std::regex rex(regx);
+  for (auto ite = std::sregex_iterator(s.begin(), s.end(), rex); ite != std::sregex_iterator(); ite++) {
+    str st = (*ite)[0];
+    v.push_back(st);
+  }
+  return v;
+}
+string_t StringUtil::submatch(const string_t& s, const string_t& regx) {
+  // first submatch ..(..)
+  std::regex rex(regx);
+  for (auto ite = std::sregex_iterator(s.begin(), s.end(), rex); ite != std::sregex_iterator(); ite++) {
+    // str st = (*ite)[0];
+    // msgv(st);
+    // int n = ite->size();
+    // msgv(n);
+    if (ite->size() > 1) {
+      str st = (*ite)[1];
+      return st;
+    }
+  }
+  return "";
+}
+std::vector<string_t> StringUtil::submatches(const string_t& s, const string_t& regx) {
+  std::vector<string_t> v;
+  std::regex rex(regx);
+  for (auto ite = std::sregex_iterator(s.begin(), s.end(), rex); ite != std::sregex_iterator(); ite++) {
+    // str st = (*ite)[0];
+    // msgv(st);
+    // int n = ite->size();
+    // msgv(n);
+    for (int i = 1; i < ite->size(); i++) {
+      str st = (*ite)[i];
+      v.push_back(st);
+    }
+  }
+  return v;
 }
 
 }  // namespace B26D

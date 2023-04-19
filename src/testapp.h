@@ -218,17 +218,13 @@ public:
   const char* file() { return _file; }
   int line() { return _line; }
   std::string what() { return _what; }
-  Exception(const char* file, int line, std::string what) {
-    _file = file;
-    _line = line;
-    _what = what;
-  }
+  Exception(const char* file, int line, std::string what);
 };
 class Log {
 private:
   static void _output(std::string color, bool bold, std::string type, const char* file, int line, std::string s);
   static std::string _header(std::string color, bool bold, std::string type, const char* file, int line);
-  
+
 public:
   static const std::string CC_BLACK;
   static const std::string CC_RED;
@@ -247,13 +243,15 @@ public:
   static void warn(std::string s, const char* file, int line);
   static void inf(std::string s, const char* file, int line);
   static void exception(Exception ex);
-  //static void print(std::string s);
-  //static void println(std::string s);
-  static void print(std::string s, std::string color = "", bool bold = false, bool newline=false);
+  // static void print(std::string s);
+  // static void println(std::string s);
+  static void print(std::string s, std::string color = "", bool bold = false, bool newline = false);
   static void println(std::string s, std::string color = "", bool bold = false);
+  static void print(const std::vector<std::string>& s, std::string color = "", bool bold = false, bool newline = false);
+  static void println(const std::vector<std::string>& s, std::string color = "", bool bold = false);
   static void nl();
-
 };
+
 class Gu {
   static path_t _appPath;
   static path_t _assetsPath;
@@ -268,6 +266,8 @@ class Gu {
   static uptr<Prof> _prof;
 
 public:
+  static void sleep(int ms);
+  static path_t appPath() { return _appPath; }
   static Prof* prof() { return _prof.get(); }
   static World* world() { return _world.get(); }
   static AppConfig* config() { return _appConfig.get(); }
@@ -288,7 +288,6 @@ public:
   static int printDebugMessages(string_t&);
   static std::string getShaderInfoLog(GLint prog);
   static std::string getProgramInfoLog(GLint prog);
-  static void rtrim(std::string& s);
   static GLint glGetInteger(GLenum arg);
   static float random(float a, float b) { return (((float)a) + (((float)rand() / (float)(RAND_MAX))) * (((float)b) - ((float)a))); }
   static void debugBreak();
@@ -304,6 +303,21 @@ public:
   static sptr<Material> findMaterial(const string_t& name);
   static bool fuzzyNotZero(float val, float ep = FUZZY_ZERO_EPSILON) { return glm::epsilonNotEqual(val, 0.0f, ep); }
   static bool fuzzyNotZero(double val, double ep = FUZZY_ZERO_EPSILON) { return glm::epsilonNotEqual(val, 0.0, ep); }
+};
+class OperatingSystem {
+public:
+  static string_t executeReadOutput(const string_t& cmd);
+  static inline string_t newline() {
+    string_t ret = "";
+#if defined(BR2_OS_WINDOWS)
+    ret = "\r\n";
+#elif defined(BR2_OS_LINUX)
+    ret = "\n";
+#else
+    OS_METHOD_NOT_IMPLEMENTED
+#endif
+    return ret;
+  }
 };
 class ImageFormat {
 private:
@@ -678,23 +692,40 @@ public:
   void testMakeQuads();
   void reset();
 };
+
 class Input {
 private:
   enum class KeyState {
-    Up,
-    Press,
-    Down,
-    Release,
+    Up = 0,
+    Press = 1,
+    Down = 2,
+    Release = 3,
   };
   struct KeyEvent {
     int _key = 0;
     bool _press = false;
   };
-  std::map<int, KeyState> _keys;
+  class Key {
+  private:
+    int _code;
+    bool _press;
+    KeyState _state = KeyState::Up;
+
+  public:
+    KeyState state() { return _state; }
+    bool& press() { return _press; }
+    int code() { return _code; }
+    void upateKey();
+
+    Key(int code) { _code = code; }
+  };
+  std::map<int, uptr<Key>> _keys;
+  // std::map<int, KeyState> _keys;
   std::vector<KeyEvent> _key_events;
   vec2 _mouseLast;
   vec2 _mouse;
   void updateCursor();
+  KeyState state(int key);
   Window* _window = nullptr;
 
 public:
@@ -730,7 +761,10 @@ protected:
   wptr<Bobj> _parent;
   b2_objdata* _data = nullptr;
   b2_actiondata* _action = nullptr;
-  b2_framedata* _frame = nullptr;
+  double _atime = 0;
+  double _aspeed = 1;
+  int _frameidx = -1;
+  bool _flip = false;
   sptr<Mesh> _mesh = nullptr;
   sptr<Material> _material = nullptr;
   box3 _boundBox = box3::one();
@@ -753,8 +787,12 @@ public:
   bool& visible() { return _visible; }
   OnUpdateFunc& onUpdate() { return _onUpdate; }
 
-  b2_actiondata*& action() { return _action; }
-  b2_framedata* frame() { return _frame; }
+  b2_objdata* data() { return _data; }
+  b2_actiondata* action() { return _action; }
+  void play(b2_actiondata* a, double time = 0);
+  double duration(b2_actiondata* a);
+  double& aspeed() { return _aspeed; }
+  bool& flip() { return _flip; }
 
   vec3& pos() { return _pos; }
   quat& rot() { return _rot; }
@@ -891,8 +929,9 @@ public:
   virtual void update(Bobj* obj, float dt) override;
 };
 class Prof {
-  //press P to profile
+  // press P to profile
   uint64_t _last = 0;
+
 public:
   Prof();
   void dump(const char* file, int line);
@@ -1032,16 +1071,16 @@ public:
   bool EnableDebug = true;  // enables debugging
   bool BreakOnGLError = true;
   bool Log_Shader_Details_Verbose = true;
-  bool Log_Shader_Bind_Warnings = false;//true;
-
+  bool Log_Shader_Bind_Warnings = false;  // true;
+  bool Log_Shader_Processed_Source = false;
 };
 
 #pragma endregion
 #pragma region B26
 
 class b2_datafile {
-  const int c_MetaFileVersionMajor = 0;
-  const int c_MetaFileVersionMinor = 2;
+public:
+  enum { c_MetaFileVersionMajor = 0, c_MetaFileVersionMinor = 2, c_magic = 1216926865 };
 
 public:
   int32_t _major = -1;
@@ -1055,9 +1094,9 @@ public:
 };
 class b2_mtexdata {
 public:
-  int32_t _texid;  //= -1;
-  int32_t _w;      //= -1;
-  int32_t _h;      //= -1;
+  int32_t _iid;  //= -1;
+  int32_t _w;    //= -1;
+  int32_t _h;    //= -1;
   std::vector<std::string> _images;
   void deserialize(BinaryFile* bf);
 };
@@ -1065,7 +1104,7 @@ class b2_objdata {
 public:
   int32_t _id = -1;
   std::string _name = "";
-  float _framerate = 0.0f;
+  float _fps = 0.0f;
   std::vector<uptr<b2_actiondata>> _actions;
   std::vector<uptr<b2_actiondata>>& actions() { return _actions; }
   void deserialize(BinaryFile* bf);
@@ -1076,19 +1115,19 @@ public:
   std::string _name = "";
   std::vector<uptr<b2_framedata>> _frames;
   std::vector<uptr<b2_framedata>>& frames() { return _frames; }
+
   void deserialize(BinaryFile* bf);
 };
 class b2_framedata {
 public:
   float _seq = -1;
   std::string _name = "";
-  int32_t _mtexid = -1;
+  int32_t _iid = -1;  // 1 based
   int32_t _x = -1;
   int32_t _y = -1;
   int32_t _w = -1;
   int32_t _h = -1;
   std::vector<std::string> _imgs;
-  vec4 texpos() const { return vec4(_x, _y, _w, _h); }
   void deserialize(BinaryFile* bf);
 };
 

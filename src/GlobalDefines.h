@@ -35,6 +35,8 @@
 #include <stdio.h>
 #endif
 
+#define TESTAPP_NS B26D
+
 namespace std {
 std::string to_string(const char* __val);
 std::string to_string(const GLubyte* __val);
@@ -82,8 +84,7 @@ inline bool vec_lte(vec<Dx, Tx, Qx> const& x, vec<Dx, Tx, Qx> const& y) {
 
 }  // namespace glm
 
-namespace B26D {
-
+namespace TESTAPP_NS {
 #pragma region macros
 
 #if defined(linux)
@@ -109,8 +110,8 @@ namespace B26D {
 //#define GPU_STRUCT struct alignas(16)
 #define GPU_STRUCT struct
 #define SHADER_SHARED
-#define TO_STRING(__x) #__x
-#define SHADER_SHARED_STR TO_STRING(SHADER_SHARED)
+#define _TO_STRING(__x) #__x
+#define TO_STRING(__x) _TO_STRING(__x)
 
 #define LogDebug(_msgx) B26D::Log::dbg(std::string() + _msgx, __FILE__, __LINE__)
 #define LogInfo(_msgx) B26D::Log::inf(std::string() + _msgx, __FILE__, __LINE__)
@@ -229,6 +230,9 @@ class BinaryFile;
 
 class Gu;
 class Prof;
+class OperatingSystem;
+class DebugHelper;
+class StringUtil;
 class AppConfig;
 
 class Viewport;
@@ -316,21 +320,6 @@ class MathUtils {
 public:
   BR2_FORCE_INLINE static int32_t getNumberOfDigits(int32_t i) { return i > 0 ? (int)log10f((float)i) + 1 : 1; }
   BR2_FORCE_INLINE static uint32_t getNumberOfDigits(uint32_t i) { return i > 0 ? (int)log10((double)i) + 1 : 1; }
-};
-
-class OperatingSystem {
-public:
-  static inline string_t newline() {
-    string_t ret = "";
-#if defined(BR2_OS_WINDOWS)
-    ret = "\r\n";
-#elif defined(BR2_OS_LINUX)
-    ret = "\n";
-#else
-    OS_METHOD_NOT_IMPLEMENTED
-#endif
-    return ret;
-  }
 };
 
 template <typename Tx>

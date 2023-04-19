@@ -1,14 +1,15 @@
 #include <fstream>
 #include <sstream>
 #include <iterator>
+#include <thread>
 #include <numeric>
-#include <regex>
 #include "./testapp.h"
 #define STB_IMAGE_IMPLEMENTATION
 #include "stb_image.h"
 #include "./BinaryFile.h"
 #include "./StringUtil.h"
 #include "./Overlay.h"
+#include "./DebugHelper.h"
 
 namespace std {
 
@@ -21,8 +22,37 @@ std::string to_string(const GLubyte* __val) {
 
 }  // namespace std
 
-namespace B26D {
+namespace TESTAPP_NS {
+#pragma region OperatingSystem
 
+string_t OperatingSystem::executeReadOutput(const string_t& cmd) {
+  string_t data = "";
+#if defined(BR2_OS_LINUX)
+  // This works only if VSCode launches the proper terminal (some voodoo back there);
+  const int MAX_BUFFER = 256;
+  char buffer[MAX_BUFFER];
+  std::memset(buffer, 0, MAX_BUFFER);
+  string_t cmd_mod = std::string("") + cmd + " 2>&1";  // redirect stderr to stdout
+
+  FILE* stream = popen(cmd_mod.c_str(), "r");
+  if (stream) {
+    while (fgets(buffer, MAX_BUFFER, stream) != NULL) {
+      data.append(buffer);
+    }
+    if (ferror(stream)) {
+      std::cout << "Error executeReadOutput() " << std::endl;
+    }
+    clearerr(stream);
+    pclose(stream);
+  }
+#else
+  BRLogWarn("Tried to call invalid method on non-linux platform.");
+  // Do nothing
+#endif
+  return data;
+}
+
+#pragma endregion
 #pragma region static data
 
 const std::string Log::CC_BLACK = "30";
@@ -54,14 +84,42 @@ Prof::Prof() {
   _last = Gu::getMicroSeconds();
 }
 void Prof::dump(const char* file, int line) {
-  auto ct = Gu::context();
-  if (ct->input()->pressOrDown(GLFW_KEY_P)) {
-    uint64_t x = Gu::getMicroSeconds();
-    Log::print("" + std::to_string(x - _last) + "ms", Log::CC_CYAN, true);
+  if (Gu::context()->input()->pressOrDown(GLFW_KEY_P)) {
+    float res = (float)(((double)(Gu::getMicroSeconds() - _last)) / 1000.0);
+
+    auto cs = DebugHelper::getCallStack();
+    std::string tabs = "";
+    std::string tab = "  ";
+    std::string method = "";
+    int depth = -1;
+    std::string ns = std::string(TO_STRING(TESTAPP_NS));
+    std::function<void(std::string)> methodName = [ns, &method](std::string s) {
+      str rex = std::string() + "\\s(" + ns + "::[a-zA-Z0-9_:]+)";
+      method = str(" ") + StringUtil::submatch(s, rex);
+    };
+    for (int i = cs.size() - 1; i >= 0; i--) {
+      if (depth != -1) {
+        if (cs[i].find(ns + "::Prof") != std::string::npos) {
+          break;
+        }
+
+        methodName(cs[i]);
+        tabs += tab;
+        depth += 1;
+      }
+      if (cs[i].find(ns + "::Gu::run") != std::string::npos) {
+        depth = 0;
+        methodName(cs[i]);
+      }
+    }
+
+    Log::print(StringUtil::format("%.2fms", res), res > 2.9f ? Log::CC_RED : Log::CC_CYAN, true);
+    Log::print(tabs + method, Log::CC_PINK, true);
     auto fn = std::filesystem::path(std::string(file)).filename().string();
-    Log::print("  " + fn + ":" + std::to_string(line), Log::CC_GREEN, true);
+    Log::print(" " + fn + ":" + std::to_string(line), Log::CC_GREEN, true);
     Log::nl();
-    _last = x;
+
+    _last = Gu::getMicroSeconds();  // filter out the conversion junk above
   }
 }
 
@@ -85,6 +143,15 @@ void Log::exception(Exception ex) {
 }
 void Log::nl() {
   std::cout << std::endl;
+}
+
+void Log::println(const std::vector<std::string>& s, std::string color, bool bold) {
+  print(s, color, bold, true);
+}
+void Log::print(const std::vector<std::string>& s, std::string color, bool bold, bool newline) {
+  for (auto& i : s) {
+    print(i, color, bold, newline);
+  }
 }
 void Log::println(std::string s, std::string color, bool bold) {
   print(s, color, bold, true);
@@ -113,6 +180,16 @@ std::string Log::_header(std::string color, bool bold, std::string type, const c
   auto pdir = std::filesystem::path(std::string(file)).parent_path().filename();
   auto fn = std::filesystem::path(std::string(file)).filename();
   return cc_color(color, bold) + "[" + type + "] " + std::string(pdir) + "/" + std::string(fn) + ":" + std::to_string(line) + " ";
+}
+
+#pragma endregion
+#pragma region Exception
+
+Exception::Exception(const char* file, int line, std::string what) {
+  _file = file;
+  _line = line;
+  _what = what;
+  _what += OperatingSystem::newline() + DebugHelper::getStackTrace();
 }
 
 #pragma endregion
@@ -165,7 +242,7 @@ int Gu::run(int argc, char** argv) {
       std::vector<GLFWwindow*> destroy;
       for (auto ite = _windows.begin(); ite != _windows.end(); ite++) {
         prof();
-         auto win = ite->second.get();
+        auto win = ite->second.get();
         glfwMakeContextCurrent(win->glfwWindow());
         _context = win;
         prof();
@@ -193,6 +270,9 @@ int Gu::run(int argc, char** argv) {
         }
 
         win->swap();
+
+        //
+
         prof();
 
         if (win->state() == Window::WindowState::Quit) {
@@ -224,6 +304,9 @@ int Gu::run(int argc, char** argv) {
   glfwTerminate();
 
   return ret_code;
+}
+void Gu::sleep(int ms) {
+  std::this_thread::sleep_for(std::chrono::milliseconds(ms));
 }
 Window* Gu::createWindow(int w, int h, std::string title) {
   // share ctx with all windows.
@@ -310,15 +393,6 @@ std::string Gu::executeReadOutput(const std::string& cmd) {
   // Do nothing
 #endif
   return data;
-}
-void Gu::rtrim(std::string& s) {
-  int len = 0;
-  for (len = s.length(); len > 0; len--) {
-    if (!std::isspace((int)s.at(len - 1))) {
-      break;
-    }
-  }
-  s.erase(s.begin() + len, s.end());
 }
 GLint Gu::glGetInteger(GLenum arg) {
   GLint out = 0;
@@ -855,7 +929,7 @@ std::string Shader::getProgramInfoLog(GLuint prog) {
 Shader::ShaderMeta::ShaderMeta() {
   LogInfo("Loading shader metadata");
 
-  std::string c_shared = std::string(SHADER_SHARED_STR);
+  std::string c_shared = std::string(_TO_STRING(SHADER_SHARED));
 
   auto structs_raw = Gu::readFile(Gu::relpath("../src/gpu_structs.h"));
 
@@ -874,13 +948,9 @@ Shader::ShaderMeta::ShaderMeta() {
   _globals.append("\n");
 
   // struct inputs
-  std::regex rex("struct\\s+([a-zA-Z0-9_]+)");
-  for (auto ite = std::sregex_iterator(strStructs.begin(), strStructs.end(), rex); ite != std::sregex_iterator(); ite++) {
-    int n = ite->size();
-    if (ite->size() > 1) {
-      _structs.push_back((*ite)[1]);
-      LogDebug("struct " + (*ite)[1].str());
-    }
+  auto matches = StringUtil::submatches(strStructs, "struct\\s+([a-zA-Z0-9_]+)");
+  for (auto& m : matches) {
+    _structs.push_back(m);
   }
 }
 std::vector<std::string> Shader::processSource(path_t& loc, ShaderStage stage) {
@@ -889,11 +959,10 @@ std::vector<std::string> Shader::processSource(path_t& loc, ShaderStage stage) {
   }
   Assert(_meta);
 
-  LogInfo("==Loading " + loc.string() + "==");
+  // LogDebug("Loading " + loc.string());
   auto src_raw = Gu::readFile(loc);
 
   // find inputs.
-  LogInfo("==Processing==");
   Assert(_meta);
   std::string str_buffers = "";
   auto src_nocoms = StringUtil::strip(src_raw, std::string("/*"), std::string("*/"), true, true);
@@ -901,13 +970,13 @@ std::vector<std::string> Shader::processSource(path_t& loc, ShaderStage stage) {
   src_nocoms = StringUtil::strip(src_nocoms, std::string("\""), std::string("\""), true, true);
   src_nocoms = StringUtil::strip(src_nocoms, std::string("\'"), std::string("\'"), true, true);
 
-  if (false) {
-    LogDebug("========");
-    printSrc(StringUtil::split(src_raw, '\n'));
-    LogDebug("========");
-    printSrc(StringUtil::split(src_nocoms, '\n'));
-    LogDebug("========");
-  }
+  // if (false) {
+  //   LogDebug("========");
+  //   printSrc(StringUtil::split(src_raw, '\n'));
+  //   LogDebug("========");
+  //   printSrc(StringUtil::split(src_nocoms, '\n'));
+  //   LogDebug("========");
+  // }
   int binding = 0;
 
   for (auto& str_struct : _meta->_structs) {
@@ -936,7 +1005,10 @@ std::vector<std::string> Shader::processSource(path_t& loc, ShaderStage stage) {
 
   auto src = _meta->_globals + str_buffers + src_raw;
   auto lines = StringUtil::split(src, '\n');
-  printSrc(lines);
+
+  if (Gu::config()->Log_Shader_Processed_Source) {
+    printSrc(lines);
+  }
 
   return lines;
 }
@@ -1322,27 +1394,47 @@ void Input::addKeyEvent(int32_t key, bool press) {
   k._key = key;
   k._press = press;
   _key_events.push_back(k);
-  // msg("key event " + key + " press=" + press);
+}
+Input::KeyState Input::state(int key) {
+  auto it = _keys.find(key);
+  if (it != _keys.end()) {
+    return it->second.get()->state();
+  }
+  return KeyState::Up;
 }
 bool Input::press(int key) {
-  auto it = _keys.find(key);
-  if (it != _keys.end()) {
-    return it->second == KeyState::Press;
-  }
-  return false;
+  return state(key) == KeyState::Press;
 }
 bool Input::pressOrDown(int key) {
-  auto it = _keys.find(key);
-  if (it != _keys.end()) {
-    return it->second == KeyState::Press || it->second == KeyState::Down;
-  }
-  return false;
+  return state(key) == KeyState::Press || state(key) == KeyState::Down;
 }
 void Input::updateCursor() {
   _mouseLast = _mouse;
   double mx = 0, my = 0;
   glfwGetCursorPos(_window->glfwWindow(), &mx, &my);
   _mouse = vec2((float)mx, (float)my);
+}
+void Input::Key::upateKey() {
+  auto state = _state;
+  if (state == KeyState::Up && _press) {
+    state = KeyState::Press;
+  }
+  else if (state == KeyState::Press && _press) {
+    state = KeyState::Down;
+  }
+  else if (state == KeyState::Press && !_press) {
+    state = KeyState::Release;
+  }
+  else if (state == KeyState::Down && !_press) {
+    state = KeyState::Release;
+  }
+  else if (state == KeyState::Release && _press) {
+    state = KeyState::Press;
+  }
+  else if (state == KeyState::Release && !_press) {
+    state = KeyState::Up;
+  }
+  _state = state;
 }
 void Input::update() {
   updateCursor();
@@ -1351,31 +1443,16 @@ void Input::update() {
     for (auto& ke : _key_events) {
       auto it = _keys.find(ke._key);
       if (it == _keys.end()) {
-        _keys.insert(std::make_pair(ke._key, KeyState::Up));
+        _keys.insert(std::make_pair(ke._key, std::make_unique<Key>(ke._key)));
         it = _keys.find(ke._key);
       }
-      auto state = it->second;
-      if (state == KeyState::Up && ke._press) {
-        state = KeyState::Press;
-      }
-      else if (state == KeyState::Press && ke._press) {
-        state = KeyState::Down;
-      }
-      else if (state == KeyState::Press && !ke._press) {
-        state = KeyState::Release;
-      }
-      else if (state == KeyState::Down && !ke._press) {
-        state = KeyState::Release;
-      }
-      else if (state == KeyState::Release && ke._press) {
-        state = KeyState::Press;
-      }
-      else if (state == KeyState::Release && !ke._press) {
-        state = KeyState::Up;
-      }
-      it->second = state;
+      it->second.get()->press() = ke._press;
     }
     _key_events.clear();
+  }
+
+  for (auto& it1 : _keys) {
+    it1.second.get()->upateKey();
   }
 }
 
@@ -1595,6 +1672,7 @@ Viewport* RenderView::getClipViewport() {
   }
 }
 #pragma endregion
+#pragma region Gpu
 
 Gpu::Gpu() {
   _last = std::make_unique<GpuRenderState>();
@@ -1655,7 +1733,10 @@ void Gpu::setState(const GpuRenderState& state, bool force) {
 
   *(_last.get()) = state;
 }
+
+#pragma endregion
 #pragma region Frustum
+
 Frustum::Frustum() {}
 Frustum::~Frustum() {}
 void Frustum::update(Camera* cam) {
@@ -1793,6 +1874,7 @@ void Camera::computeView(RenderView* rv) {
   _computedViewport->width(rv->viewport()->width());
   _computedViewport->height(rv->viewport()->height());
 }
+
 #pragma endregion
 #pragma region Bobj
 
@@ -1838,29 +1920,50 @@ void Bobj::update(double dt, mat4* parent) {
     }
   }
 
-  // animation..
-
   // create gpuobj
   if (_data != nullptr) {
-    _gpuObj._mat = _world;
-    const b2_framedata* fr = _frame;
+    // animation
+    b2_framedata* fr = nullptr;
+    if (_action != nullptr) {
+      _atime += dt * _aspeed;
+      auto f1 = 1.0 / ((double)_data->_fps);
+      if (_atime >= f1) {
+        _atime = fmod(_atime, f1);
+        _frameidx = (_frameidx + 1) % (int)_action->frames().size();
+      }
+      fr = _action->frames()[_frameidx].get();
+    }
     if (fr == nullptr) {
       fr = _data->actions()[0]->frames()[0].get();
     }
+
+    _gpuObj._mat = _world;
     Assert(fr != nullptr);
-    auto& texs = Gu::world()->data()->_texs;
-    float w = 1.0f / (float)texs[fr->_mtexid - 1]->_w;  // note invalid - texid doe snot directly map
-    float h = 1.0f / (float)texs[fr->_mtexid - 1]->_h;
-    _gpuObj._tex = fr->texpos();
-    _gpuObj._tex.x *= w;
-    _gpuObj._tex.y *= h;
-    _gpuObj._tex.z *= w;
-    _gpuObj._tex.w *= h;
-    _gpuObj._mtexid = fr->_mtexid - 1;
+    int gpuTexID = fr->_iid - 1;
+    auto tex = Gu::world()->data()->_texs[gpuTexID].get();
+    float w1 = 1.0f / ((float)tex->_w);
+    float h1 = 1.0f / ((float)tex->_h);
+    if (_flip) {
+      _gpuObj._tex = vec4((fr->_x + fr->_w) * w1, (fr->_y + fr->_h) * h1, fr->_x * w1, fr->_y * h1);
+    }
+    else {
+      _gpuObj._tex = vec4(fr->_x * w1, (fr->_y + fr->_h) * h1, (fr->_x + fr->_w) * w1, fr->_y * h1);
+    }
+    _gpuObj._iid = gpuTexID;
   }
   if (Gu::fuzzyNotZero(_gpuLight._radius)) {
     _gpuLight._pos = _pos;
   }
+}
+double Bobj::duration(b2_actiondata* a) {
+  Assert(a);
+  return (1.0 / ((double)_data->_fps)) * ((double)_data->actions().size());
+}
+void Bobj::play(b2_actiondata* a, double time) {
+  Assert(a);
+  _action = a;
+  _frameidx = 0;
+  _atime = time * duration(a);
 }
 void Bobj::calcBoundBox(box3* parent) {
   if (_mesh != nullptr) {
@@ -1930,11 +2033,21 @@ void Bobj::lookAt(const vec3&& at) {
     return;
   }
   vat = glm::normalize(vat);
-  auto axis = glm::cross(_forward, vat);
+  auto fw = _forward;
+  auto dot = glm::dot(fw, vat);
+  if (glm::epsilonEqual(dot, 1.0f, 0.00001f)) {
+    return;
+  }
+  auto am = -1.0f;
+  if (glm::epsilonEqual(dot, -1.0f, 0.00001f)) {
+    fw = _right;
+    am = 1.0f;
+  }
+  auto axis = glm::cross(fw, vat);
   axis = glm::normalize(axis);
-  auto a = glm::acos(glm::dot(vat, _forward));
+  auto a = glm::acos(glm::dot(vat, fw));
   if (a < -e || a > e) {
-    _rot = glm::rotate(_rot, -a, axis);
+    _rot = glm::rotate(_rot, a * am, axis);
   }
 }
 
@@ -1963,7 +2076,7 @@ void InputController::update(Bobj* obj, float delta) {
       obj->rot() = glm::rotate(obj->rot(), roty_ang * dm.y, obj->right());
     }
     if (Gu::fuzzyNotZero(dm.x, cursor_sensitivity)) {
-      obj->rot() = glm::rotate(obj->rot(), -rotx_ang * dm.x, vec3(0, 1, 0));
+      obj->rot() = glm::rotate(obj->rot(), rotx_ang * dm.x, vec3(0, 1, 0));
       ;
     }
   }
@@ -1976,17 +2089,17 @@ void InputController::update(Bobj* obj, float delta) {
     fmul = 5.0f;
     smul = 3.0f;
   }
-  if (inp->pressOrDown(GLFW_KEY_UP) || inp->pressOrDown(GLFW_KEY_W)) {
+  if (inp->pressOrDown(GLFW_KEY_W)) {
     obj->pos() += obj->forward() * speed() * fmul * delta;
   }
-  if (inp->pressOrDown(GLFW_KEY_DOWN) || inp->pressOrDown(GLFW_KEY_S)) {
+  if (inp->pressOrDown(GLFW_KEY_S)) {
     obj->pos() -= obj->forward() * speed() * fmul * delta;
   }
-  if (inp->pressOrDown(GLFW_KEY_LEFT) || inp->pressOrDown(GLFW_KEY_A)) {
+  if (inp->pressOrDown(GLFW_KEY_A)) {
     obj->pos() += obj->right() * sspeed() * smul * delta;
     // obj->rot() = glm::rotate(obj->rot(), -ang, obj->up());
   }
-  if (inp->pressOrDown(GLFW_KEY_RIGHT) || inp->pressOrDown(GLFW_KEY_D)) {
+  if (inp->pressOrDown(GLFW_KEY_D)) {
     obj->pos() -= obj->right() * sspeed() * smul * delta;
     // obj->rot() = glm::rotate(obj->rot(), ang, obj->up());
   }
@@ -2061,7 +2174,8 @@ World::World() {
   // default camera
   auto cam = std::make_shared<Camera>("MainCamera");
   cam->components().push_back(std::make_unique<InputController>());
-  cam->pos() = vec3(0, 2, -10);
+  cam->pos() = vec3(0, 0, -15);
+  cam->lookAt(vec3(0, 0, 0));
   _activeCamera = cam;
   _root->addChild(cam);
 
@@ -2074,36 +2188,65 @@ World::World() {
   auto dat = _data->_objs[0].get();
   newob = std::make_shared<Bobj>("test_object", dat);
   _root->addChild(newob);
+  Assert(newob->data()->actions().size() > 0);
+  newob->play(newob->data()->actions()[0].get());
+  newob->onUpdate() = [](auto bobj, auto dt) {
+    double incspd = 1.6;
+    double spd = 2.0;
+    double aspdmax = 2.0;
+    double aspeedmin = 0.8;
+    if (Gu::context()->input()->pressOrDown(GLFW_KEY_RIGHT)) {
+      bobj->pos().x += spd * dt;
+      bobj->aspeed() = glm::clamp(bobj->aspeed() + incspd * dt, aspeedmin, aspdmax);
+      bobj->flip() = true;
+    }
+    else if (Gu::context()->input()->pressOrDown(GLFW_KEY_LEFT)) {
+      bobj->pos().x -= spd * dt;
+      bobj->aspeed() = glm::clamp(bobj->aspeed() + incspd * dt, aspeedmin, aspdmax);
+      bobj->flip() = false;
+    }
+    else {
+      bobj->aspeed() = glm::clamp(bobj->aspeed() - incspd * dt, aspeedmin, 999.0);
+    }
+  };
+
+  std::weak_ptr<Bobj> obw = std::weak_ptr(newob);
 
   newob = std::make_shared<Bobj>("test_light");
   newob->lightRadius() = 10;
   newob->lightPower() = 0.75f;
   newob->lightColor() = vec3(0.99124, 0.98315f, 0.71814);
   newob->lightDir() = vec3(0, 0, 0);
-  newob->onUpdate() = [](auto bobj, auto dt) {
+  newob->onUpdate() = [obw](auto bobj, auto dt) {
     double r = 7.0;
     double s = 3;
     auto a = Gu::world()->time()->modSeconds(s) * glm::two_pi<double>();
     bobj->pos().x = (float)(glm::cos(a) * r);
     bobj->pos().y = 0;
     bobj->pos().z = (float)(glm::sin(a) * r);
+    if (auto ob = obw.lock()) {
+      bobj->pos() += ob->pos();
+    }
   };
   _root->addChild(newob);
 
-  newob = std::make_shared<Bobj>("test_light2");
-  newob->lightRadius() = 10;
-  newob->lightPower() = 0.75f;
-  newob->lightColor() = vec3(0.0099713, 0.0021412, 0.9414);
-  newob->lightDir() = vec3(0, 0, 0);
-  newob->onUpdate() = [](auto bobj, auto dt) {
-    double r = 5.0;
-    double s = 12;
-    auto a = Gu::world()->time()->modSeconds(s) * glm::two_pi<double>();
-    bobj->pos().x = (float)(glm::cos(a) * r);
-    bobj->pos().y = (float)(glm::sin(a) * r);
-    bobj->pos().z = 0;
-  };
-  _root->addChild(newob);
+  // newob = std::make_shared<Bobj>("test_light2");
+  // newob->lightRadius() = 10;
+  // newob->lightPower() = 0.75f;
+  // newob->lightColor() = vec3(0.0099713, 0.0021412, 0.9414);
+  // newob->lightDir() = vec3(0, 0, 0);
+  // newob->onUpdate() = [](auto bobj, auto dt) {
+  //   double r = 5.0;
+  //   double s = 12;
+  //   auto a = Gu::world()->time()->modSeconds(s) * glm::two_pi<double>();
+  //   bobj->pos().x = (float)(glm::cos(a) * r);
+  //   bobj->pos().y = (float)(glm::sin(a) * r);
+  //   bobj->pos().z = 0;
+  //    if (auto ob = obw.lock()) {
+  //    bobj->pos() += ob->pos();
+  //  }
+  // };
+  // _root->addChild(newob);
 
   _visibleStuff = std::make_unique<VisibleStuff>();
 }
@@ -2453,7 +2596,7 @@ void Window::initEngine() {
   CheckErrorsDbg();
 
   auto testpath = Gu::relpath("../data/tex/stpeter.jpg");
-  _testTex = Texture::singlePixel(vec4(1, 0, 1, 1));
+  _testTex = Texture::singlePixel(vec4(1, 1, 1, 1));
 
   _drawQuads = std::make_unique<DrawQuads>();
   _drawQuads->testMakeQuads();
@@ -2595,9 +2738,12 @@ void Window::renderViews() {
   }
 
   CheckErrorsRt();
+  prof();
 }
 void Window::swap() {
+  prof();
   glfwSwapBuffers(_window);
+  prof();
 }
 
 #pragma endregion
@@ -2614,27 +2760,31 @@ void b2_datafile::deserialize(BinaryFile* bf) {
   _mtex_w = bf->readInt32();
   _mtex_h = bf->readInt32();
 
-  Assert(_major == c_MetaFileVersionMajor && _minor == c_MetaFileVersionMinor);
+  Assert(bf->readInt32() == b2_datafile::c_magic);
+
+  Assert(_major == b2_datafile::c_MetaFileVersionMajor && _minor == b2_datafile::c_MetaFileVersionMinor);
   int clayers = bf->readInt32();
-  msgv(clayers);
+  // msgv(clayers);
   for (int i = 0; i < clayers; i++) {
     _layers.push_back(bf->readString());
   }
 
   int ntexs = bf->readInt32();
-  msgv(ntexs);
+  // msgv(ntexs);
   for (int i = 0; i < ntexs; i++) {
     auto bt = std::make_unique<b2_mtexdata>();
     bt->deserialize(bf);
     _texs.push_back(std::move(bt));
   }
   int nobjs = bf->readInt32();
-  msgv(nobjs);
+  // msgv(nobjs);
   for (int i = 0; i < nobjs; i++) {
     auto ob = std::make_unique<b2_objdata>();
     ob->deserialize(bf);
     _objs.push_back(std::move(ob));
   }
+
+  Assert(bf->readInt32() == b2_datafile::c_magic);
 
   // debug
   Assert(_objs.size() > 0);
@@ -2643,26 +2793,32 @@ void b2_datafile::deserialize(BinaryFile* bf) {
   }
 }
 void b2_mtexdata::deserialize(BinaryFile* bf) {
-  _texid = bf->readInt32();
+  Assert(bf->readInt32() == b2_datafile::c_magic);
+  _iid = bf->readInt32();
   _w = bf->readInt32();
   _h = bf->readInt32();
-  msgv(_texid);
-  msgv(_w);
-  msgv(_h);
-  auto numimgs = bf->readInt32();
-  for (int img = 0; img < numimgs; img++) {
+  auto imgcount = bf->readInt32();
+  // msgv(_iid);
+  // msgv(_w);
+  // msgv(_h);
+  // msgv(imgcount);
+  Assert(bf->readInt32() == b2_datafile::c_magic);
+  for (int img = 0; img < imgcount; img++) {
     std::string image = bf->readString();
     _images.push_back(image);
   }
 }
 void b2_objdata::deserialize(BinaryFile* bf) {
+  Assert(bf->readInt32() == b2_datafile::c_magic);
   _id = bf->readInt32();
   _name = bf->readString();
-  _framerate = bf->readFloat();
-  msgv(_id);
-  msgv(_name);
-  msgv(_framerate);
+  _fps = bf->readFloat();
   auto actioncount = bf->readInt32();
+  // msgv(_id);
+  // msgv(_name);
+  // msgv(_fps);
+  // msgv(actioncount);
+  Assert(bf->readInt32() == b2_datafile::c_magic);
   for (int iact = 0; iact < actioncount; iact++) {
     auto act = std::make_unique<b2_actiondata>();
     act->deserialize(bf);
@@ -2670,11 +2826,14 @@ void b2_objdata::deserialize(BinaryFile* bf) {
   }
 }
 void b2_actiondata::deserialize(BinaryFile* bf) {
+  Assert(bf->readInt32() == b2_datafile::c_magic);
   _id = bf->readInt32();
   _name = bf->readString();
-  msgv(_id);
-  msgv(_name);
   auto framecount = bf->readInt32();
+  // msgv(_id);
+  // msgv(_name);
+  // msgv(framecount);
+  Assert(bf->readInt32() == b2_datafile::c_magic);
   for (int ifr = 0; ifr < framecount; ifr++) {
     auto fr = std::make_unique<b2_framedata>();
     fr->deserialize(bf);
@@ -2682,28 +2841,30 @@ void b2_actiondata::deserialize(BinaryFile* bf) {
   }
 }
 void b2_framedata::deserialize(BinaryFile* bf) {
+  Assert(bf->readInt32() == b2_datafile::c_magic);
   _seq = bf->readFloat();
-  _mtexid = bf->readInt32();
+  _iid = bf->readInt32();
   _x = bf->readInt32();
   _y = bf->readInt32();
   _w = bf->readInt32();
   _h = bf->readInt32();
   int32_t c = bf->readInt32();
+  Assert(bf->readInt32() == b2_datafile::c_magic);
   for (int ii = 0; ii < c; ii++) {
     _imgs.push_back(bf->readString());
   }
-  msgv(_seq);
-  msgv(_mtexid);
-  msgv(_x);
-  msgv(_y);
-  msgv(_w);
-  msgv(_h);
-  msgv(_imgs.size());
+  // msgv(_seq);
+  // msgv(_iid);
+  // msgv(_x);
+  // msgv(_y);
+  // msgv(_w);
+  // msgv(_h);
+  // msgv(_imgs.size());
 }
 
 #pragma endregion
 
-}  // namespace B26D
+}  // namespace TESTAPP_NS
 
 extern "C" {
 DLL_EXPORT int main(int argc, char** argv) {

@@ -40,7 +40,7 @@ GPU_STRUCT GpuObj {
   
   vec4 _tex;  // x,y,w,h
   
-  int _mtexid;
+  int _iid;
   int _dummy0;
   int _dummy1;
   int _dummy2;

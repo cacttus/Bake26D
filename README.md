@@ -30,6 +30,7 @@ Blender script to output layered "2.6D" sprites from object animations, for game
 * Note: Script *must* run from terminal/cmd (blender headless).
 * Note: Object actions must be in the NLA editor.
 * Note: VSCode python format settings (for autopep) are in ~/.config/.pycodestyle, on my PC at least
+* Note: Metadata exports sprite origin = top left corner
 
 ### C++ Test App
 Dependencies (Debian = sudo apt install)
@@ -38,12 +39,19 @@ Dependencies (Debian = sudo apt install)
 * libglfw3-dev  
 * ninja-build
 * (Note: sudo update-alternatives --config c++)
+* Controls:
+  * WSAD + Mouse - Move camera
+  * LRUD - Move player
 
 ### TODO
-* remove _library.blend and put in code
-* remove PIL - use blender's save image (16bit png)
-* move bake26 constants into cmd line vars
-* 16bit png export
+* testapp: idle animation (test)
+* testapp: test varied animation frame sample rates 
+* testapp: object quad w/h must conform to texture size 
+* testapp: bezier path for bk quads animation
+* script: remove _library.blend and put in code
+* script: remove PIL - use blender's save image (16bit png)
+* script: move bake26 constants into cmd line vars
+* script: 16bit png export note:  Image::from_file hard code 4Bpp
 
 
 
