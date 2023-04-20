@@ -1082,16 +1082,17 @@ Shader::ShaderVar* Shader::getVar(const str& name) {
   return it->second.get();
 }
 void Shader::setTextureUf(Texture* tex, GLuint channel, string_t loc) {
-  setTextureUf(tex->glId(), channel, loc);
+  setTextureUf(tex->glId(), channel, loc, tex->sampler()->glId());
 }
 void Shader::setTextureUf(TextureArray* tex, GLuint channel, string_t loc) {
-  setTextureUf(tex->glId(), channel, loc);
+  setTextureUf(tex->glId(), channel, loc, tex->sampler()->glId());
 }
-void Shader::setTextureUf(GLuint glid, GLuint channel, string_t loc) {
+void Shader::setTextureUf(GLuint glid, GLuint channel, string_t loc, GLuint samplerid) {
   auto sv = getVar(loc);
   auto tex_loc1 = glGetUniformLocation(_glId, loc.c_str());
   glProgramUniform1i(_glId, tex_loc1, channel);
   glBindTextureUnit(channel, glid);
+  glBindSampler(channel, samplerid);
   sv->_hasBeenBound = true;
   CheckErrorsDbg();
 }
@@ -1183,11 +1184,9 @@ Material::~Material() {}
 
 GpuBuffer::GpuBuffer() {
   glCreateBuffers(1, &_glId);
-  // glNamedBufferStorage(_glId, size, data, flags);//for immutable buffers
   CheckErrorsDbg();
 }
 GpuBuffer::GpuBuffer(size_t size, const void* data, uint32_t flags) : GpuBuffer() {
-  // glNamedBufferStorage(_glId, size, data, flags);//for immutable buffers
   glNamedBufferData(_glId, size, data, flags);
   CheckErrorsDbg();
 }
@@ -1200,6 +1199,43 @@ void GpuBuffer::copyToGpu(size_t size, const void* data, size_t offset) {
   CheckErrorsDbg();
 }
 
+#pragma endregion
+#pragma region sampler
+Sampler::Sampler() {
+  glCreateSamplers(1, &_glId);
+}
+Sampler::Sampler(GLenum mag, GLenum min, GLenum mip, GLenum wrap, glm::vec4 borderColor, GLenum compare) : Sampler() {
+  CheckErrorsDbg();
+  assert(mag == GL_LINEAR || mag == GL_NEAREST);
+  assert(min == GL_LINEAR || min == GL_NEAREST);
+  assert(mip == GL_LINEAR || mip == GL_NEAREST);
+
+  _mag = mag;
+  _min = min;
+  _mip = mip;
+  _wrap = wrap;
+
+  GLint minFilter = GL_NONE;
+  if (min == GL_LINEAR) {
+    minFilter = mip == GL_LINEAR ? GL_LINEAR_MIPMAP_LINEAR : GL_LINEAR_MIPMAP_NEAREST;
+  }
+  else {
+    minFilter = mip == GL_LINEAR ? GL_NEAREST_MIPMAP_LINEAR : GL_NEAREST_MIPMAP_NEAREST;
+  }
+
+  glSamplerParameteri(_glId, GL_TEXTURE_MIN_FILTER, minFilter);
+  glSamplerParameteri(_glId, GL_TEXTURE_MAG_FILTER, mag);
+  glSamplerParameteri(_glId, GL_TEXTURE_WRAP_S, wrap);
+  glSamplerParameteri(_glId, GL_TEXTURE_WRAP_T, wrap);
+  glSamplerParameteri(_glId, GL_TEXTURE_WRAP_R, wrap);
+  glSamplerParameterfv(_glId, GL_TEXTURE_BORDER_COLOR, (GLfloat*)&borderColor);
+  glSamplerParameteri(_glId, GL_TEXTURE_COMPARE_MODE, compare == GL_NONE ? GL_NONE : GL_COMPARE_R_TO_TEXTURE);
+  glSamplerParameteri(_glId, GL_TEXTURE_COMPARE_FUNC, compare != GL_NONE ? compare : GL_LEQUAL);
+  CheckErrorsDbg();
+}
+Sampler::~Sampler() {
+  glDeleteSamplers(1, &_glId);
+}
 #pragma endregion
 #pragma region TextureBase
 
@@ -1214,14 +1250,9 @@ TextureBase::TextureBase(int w, int h, ImageFormat* fmt, bool mipmaps, GLenum ty
 
   glTextureParameteri(_glId, GL_TEXTURE_BASE_LEVEL, 0);
   glTextureParameteri(_glId, GL_TEXTURE_MAX_LEVEL, _levels - 1);
-  if (_levels > 1) {
-    glTextureParameterf(_glId, GL_TEXTURE_MIN_FILTER, GL_NEAREST_MIPMAP_NEAREST);  // GL_LINEAR_MIPMAP_LINEAR);
-    glTextureParameterf(_glId, GL_TEXTURE_MAG_FILTER, GL_NEAREST);                 // GL_LINEAR);
-  }
-  else {
-    glTextureParameterf(_glId, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
-    glTextureParameterf(_glId, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
-  }
+
+  _sampler = std::make_unique<Sampler>(GL_LINEAR, GL_LINEAR, GL_LINEAR);
+
   CheckErrorsDbg();
 }
 TextureBase::~TextureBase() {
@@ -1591,6 +1622,7 @@ void DrawQuads::testMakeQuads() {
 #pragma region RenderView
 
 RenderView::RenderView(string_t name, vec2 uv0, vec2 uv1, int sw, int sh) {
+  CheckErrorsDbg();
   _name = name;
   _overlay = std::make_unique<Overlay>(this);
   _viewport = std::make_unique<Viewport>();
@@ -2105,6 +2137,10 @@ void InputController::update(Bobj* obj, float delta) {
   }
 
   // other keys
+  if (inp->press(GLFW_KEY_R)) {
+    GLenum smp = Gu::world()->textureArray()->sampler()->min() == GL_LINEAR ? GL_NEAREST : GL_LINEAR;
+    Gu::world()->textureArray()->sampler() = std::make_unique<Sampler>(smp, smp, smp) ;
+  }
   if (inp->press(GLFW_KEY_L)) {
     obj->lookAt(vec3(0, 0, 0));
   }
@@ -2166,7 +2202,7 @@ World::World() {
       images.push_back(std::move(Image::from_file(imgpath)));
     }
   }
-  _objtexs = std::make_unique<TextureArray>(images, true);
+  _textureArray = std::make_unique<TextureArray>(images, true);
 
   // world root
   _root = std::make_shared<Bobj>("_root");
@@ -2726,7 +2762,7 @@ void Window::renderViews() {
     _worldBuf->copyToGpu(Gu::world()->gpuWorld());
 
     _objShader->beginRender();
-    _objShader->setTextureUf(Gu::world()->objtexs(), 0, "_textures");
+    _objShader->setTextureUf(Gu::world()->textureArray(), 0, "_textures");
     _objShader->bindBlock("_ufGpuViewData_Block", dynamic_cast<GpuBuffer*>(_dataBuf.get()));
     _objShader->bindBlock("_ufGpuWorld_Block", dynamic_cast<GpuBuffer*>(_worldBuf.get()));
     _objShader->bindBlock("_ufGpuObj_Block", dynamic_cast<GpuBuffer*>(_objBuf.get()));

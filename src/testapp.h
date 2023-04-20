@@ -374,6 +374,23 @@ protected:
 
 public:
   GLuint glId() { return _glId; }
+  GLObject() {}
+  virtual ~GLObject() {}
+};
+class Sampler : public GLObject {
+  GLenum _mag;
+  GLenum _min;
+  GLenum _mip;
+  GLenum _wrap;
+
+public:
+  Sampler();
+  Sampler(GLenum mag, GLenum min, GLenum mip, GLenum wrap = GL_CLAMP, glm::vec4 borderColor = glm::vec4(0, 0, 0, 0), GLenum compare = GL_NONE);
+  virtual ~Sampler() override;
+  GLenum mag() { return _mag; }
+  GLenum min() { return _min; }
+  GLenum mip() { return _mip; }
+  GLenum wrap() { return _wrap; }
 };
 class TextureBase : public GLObject {
 public:
@@ -383,23 +400,22 @@ protected:
   int _levels = 1;
   ImageFormat* _format;
   GLenum _type;
+  uptr<Sampler> _sampler;
 
   static int calcMipLevels(int w, int h, int minwh = 1);
   void setStorageMode();
 
 public:
   TextureBase(int w, int h, ImageFormat* format, bool mipmaps, GLenum type);
-  ~TextureBase();
-  //
-  //   void bind(int32_t channel);
-  //   void unbind(int32_t channel);
+  virtual ~TextureBase() override;
+  uptr<Sampler>& sampler() { return _sampler; }
 };
 class Texture : public TextureBase {
 public:
   Texture();
   Texture(int w, int h, ImageFormat* fmt, bool mipmaps);
   Texture(Image* img, bool mipmaps = false);
-  virtual ~Texture();
+  virtual ~Texture() override;
 
   static uptr<Texture> singlePixel(vec4 color);
 
@@ -413,7 +429,7 @@ private:
 public:
   TextureArray(int w, int h, ImageFormat* fmt, bool mipmaps, int count);
   TextureArray(const std::vector<uptr<Image>>& imgs, bool mipmaps);
-  virtual ~TextureArray();
+  virtual ~TextureArray() override;
 
   static uptr<TextureArray> singlePixel(const vec4& color, int count);  // array of single pixels
   static uptr<TextureArray> test();
@@ -425,7 +441,7 @@ public:
 class Framebuffer : public GLObject {
 public:
   Framebuffer();
-  virtual ~Framebuffer();
+  virtual ~Framebuffer() override;
 };
 class Shader : public GLObject {
 public:
@@ -506,11 +522,11 @@ private:
   static void printSrc(std::vector<std::string> src);
   static std::string debugFormatSrc(std::vector<std::string> src);
   void checkDupeBindings();
-  void setTextureUf(GLuint glid, GLuint channel, string_t loc);
+  void setTextureUf(GLuint glid, GLuint channel, string_t loc, GLuint samplerid = 0);
 
 public:
   Shader(path_t vert_src, path_t geom_src, path_t frag_src);
-  ~Shader();
+  virtual ~Shader() override;
   void bindBlock(BufferBlock*, GpuBuffer*);
   void bindBlock(const string_t&& name, GpuBuffer*);
   void setTextureUf(Texture* tex, GLuint index, string_t loc);
@@ -524,7 +540,7 @@ class GpuBuffer : public GLObject {
 public:
   GpuBuffer();
   GpuBuffer(size_t size, const void* data = nullptr, uint32_t flags = GL_DYNAMIC_DRAW);
-  virtual ~GpuBuffer();
+  virtual ~GpuBuffer() override;
   void copyToGpu(size_t size, const void* data, size_t offset = 0);
 };
 template <typename Tx>
@@ -539,6 +555,7 @@ public:
     // note: count==0 => no size limit
     _count = count;
   }
+  virtual ~GpuArray() override {}
   void copyToGpu(const std::vector<Tx>& pt) {
     Assert((_count == 0) || (_count > 0 && (pt.size() <= _count)));
     if (pt.size() == 0) {
@@ -555,11 +572,12 @@ public:
 class VertexArray : public GLObject {
 public:
   VertexArray();
-  virtual ~VertexArray();
+  virtual ~VertexArray() override;
   void setAttrib(int attr_idx, int attr_compsize, GLenum attr_datatype, size_t attr_offset, bool attr_inttype, int binding_index, GpuBuffer* gbuf, size_t stride);
   void bind();
   void unbind();
 };
+
 class VertexFormat {
   class VertexComponent {
   public:
@@ -966,7 +984,7 @@ public:
   }
 };
 class World {
-  uptr<TextureArray> _objtexs;  // we're going to use arrays
+  uptr<TextureArray> _textureArray;  // we're going to use arrays
   sptr<Bobj> _root;
   sptr<Camera> _activeCamera;
   uptr<VisibleStuff> _visibleStuff;
@@ -976,7 +994,7 @@ class World {
 
 public:
   Bobj* root() { return _root.get(); }
-  TextureArray* objtexs() { return _objtexs.get(); }
+  TextureArray* textureArray() { return _textureArray.get(); }
   sptr<Camera> activeCamera() { return _activeCamera; }
   VisibleStuff* visibleStuff() { return _visibleStuff.get(); }
   WorldTime* time() { return _time.get(); }
