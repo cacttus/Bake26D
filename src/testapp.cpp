@@ -292,10 +292,6 @@ int Gu::run(int argc, char** argv) {
       }
     }
   }
-  // catch (std::exception ex) {
-  // LogError("Caught std::exception " + ex.what());
-  //   throw ex;
-  // }
   catch (Exception ex) {
     Log::exception(ex);
     ret_code = 1;
@@ -2157,12 +2153,12 @@ World::World() {
 
   _time = std::make_unique<WorldTime>();
 
-  auto b2data_root = Gu::relpath("../b26out/");
+  auto b2data_root = Gu::relpath("../data/test/");
 
   // load meta
   auto metapath = b2data_root / "B2MT.bin";
   if (!Gu::exists(metapath)) {
-    Raise(std::string() + "could not find meta: \n  " + (metapath.string()) + "\nrun (check) python script");
+    Raise(stz"Could not find meta file: \n  " + (metapath.string()) + "\nrun (check) python script");
   }
   msg("Loading metadata " + metapath.string());
   BinaryFile bf;

@@ -172,6 +172,9 @@ namespace TESTAPP_NS {
 #define CheckErrorsDbg()
 #endif
 
+
+#define stz std::string() + 
+
 #define BR2_FORCE_INLINE inline
 
 #define FUZZY_ZERO_EPSILON 0.0000001

@@ -28,7 +28,7 @@ class Convert: pass  # nopep8
 # endregion
 # region Globals
 def msg(str): _msg(logcol.whiteb + "[I] " + str + logcol.reset)
-def dbg(str): _msg(logcol.cyanb + "[D] " + str + logcol.reset)
+def _dbg(str): _msg(logcol.cyanb + "[D] " + str + logcol.reset)
 def err(str): _msg(logcol.redb + "[E] " + str + logcol.reset)
 def _msg(str):
   builtins.print(str)

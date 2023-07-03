@@ -1,7 +1,14 @@
-# python3
 # Blender MRT sprite exporter (2.6D)
-# 2.6D export script
-# clear; ~/Desktop/apps/blender*/blender -b --log-level 0 -P ~/git/Bake26D/src/Bake26.py  -- -i ~/git/Bake26D/data/blend/ -o ~/git/Bake26D/b26out -l ~/git/Bake26D/data/blend/_library.blend -gb -gj -p
+#
+#   Bake animations into MRT sprites with color + normal map and pack into mega-textures (atlas)
+#
+# Example Usage:
+#
+#  clear; ~/Desktop/apps/blender*/blender -b --log-level 0 -P ~/git/bake26d/src/Bake26.py  -- -i ~/git/bake26d/data/blend/ -o ~/git/bake26d/bin/sprites -t ~/git/bake26d/tmp/b26 -l ~/git/bake26d/data/blend/_library.blend -gb -gj -p
+#
+# Verbose output use:
+#  --verbose --debug
+#
 # Note about modules
 #   blender python interpreter caches the loaded modules so wont get any edits, use reload()
 #   could not get python modules to work with blender (im doing something wrong)
@@ -11,7 +18,6 @@
 
 import sys
 import os
-import imp
 import shutil
 import argparse
 import subprocess
@@ -20,7 +26,10 @@ import multiprocessing
 import bpy
 from mathutils import Vector, Matrix, Euler
 from PIL import Image
+from threading import Thread
+from queue import Queue, Empty  # Python 3.x
 
+# Not sure why this is needed maybe we are using an old python version
 def import_file(path, import_global=True):
   try:
     import os
@@ -48,8 +57,9 @@ def import_file(path, import_global=True):
   return module_obj
 
 import_file('./BlenderTools.py')
+#import_file('./ext_console.py')
+from BlenderTools import *
 
-msg("cwd="+os.getcwd())
 
 class ExportFormat: pass  # nopep8
 class ExportLayer: pass  # nopep8
@@ -199,7 +209,7 @@ class MtIsland:
 
   def packLayer(self, outpath, layeroutput: LayerOutput, idx: int):
     fname = layeroutput.mtex_filename(self._iid)
-    msg("packing layer "+fname+" size="+str(self._size))
+    dbg(f"packing layer '{fname}' size={self._size}")
 
     cpink = (255, 0, 255, 255)
     cblack = (0, 0, 0, 0)
@@ -213,7 +223,7 @@ class MtIsland:
       self.copyImages(self._root, master_img, idx)
       self._texnames.append(fname)
       path = os.path.join(outpath, fname)
-      msg(logcol.greenb + "" + path + logcol.reset)
+      msg(f"saving {logcol.greenb}{path}{logcol.reset}")
       master_img.save(path)
 
   def copyImages(self, node, master, layeridx: int):
@@ -248,7 +258,7 @@ class ImagePacker:
     regions_last = regions[:]
 
     # note you cant get gpu maxsize in headless blender.. we just need to pick a value
-    msg("packing " + str(len(regions)) + " texs. maxsize=" + str(maxsize))
+    dbg("packing " + str(len(regions)) + " texs. maxsize=" + str(maxsize))
 
     cur_island_id = 1
     while size <= maxsize:
@@ -494,7 +504,6 @@ class RenderInfo:
   _empname = '__b26empty'
   _dbg_renderCount = 0
   _compNodes: dict = {}
-
 class ObjectInfo:
   def __init__(self):
     self._name = ""
@@ -505,7 +514,6 @@ class ObjectInfo:
     self._min_start = 99999  # of all anims
     self._max_end = -99999
     self._b2_obj: b2_objdata = None
-
 class ActionInfo:
   def __init__(self):
     self._name = ""
@@ -515,6 +523,96 @@ class ActionInfo:
     self._end = 0
     self._texs: dict = {}
     self._b2_action: b2_actiondata = None
+
+class BProc:
+  def __init__(self, cmd, queue = True):
+    #queue = False: print output to console
+    #queue = True: queue output for get_stdout(). do not print
+
+    self.queue_output = queue
+    self._process = subprocess.Popen(cmd, stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE, shell=False)
+    def enqueue_output(_queue, _proc):
+      for line in iter(_proc.readline, b''):
+        if queue == False:
+          print(line)
+        else:
+          _queue.put(line)
+      #_queue.close()
+
+    self._out_queue = Queue()
+    self._err_queue = Queue()
+
+    self._stdout_async = Thread(target = enqueue_output, args=(self._out_queue, self._process.stdout))
+    self._stderr_async = Thread(target = enqueue_output, args=(self._err_queue, self._process.stderr))
+
+    self._stdout_async.daemon = True
+    self._stderr_async.daemon = True
+
+    self._stdout_async.start()
+    self._stderr_async.start()
+
+  @staticmethod
+  def getargs(fpath):
+    as_str=False
+    cmd=f"{sys.argv[0]}"
+    if not as_str:
+      cmd = [sys.argv[0]]
+    userarg = False
+    for i in range(1, len(sys.argv)):
+      lastarg = sys.argv[i - 1]
+      arg = sys.argv[i]
+      if lastarg == "--":
+        userarg = True
+      elif userarg == True and lastarg == Bake26.c_argInput:
+        if as_str:
+          cmd += " " + lastarg + " " + fpath
+        else:
+          cmd.append(f"{lastarg}")
+          cmd.append(f"{fpath}")
+      elif userarg == True and (arg == Bake26.c_argPack or arg == Bake26.c_argPackOnly):
+        pass
+      else:
+        if as_str:
+          cmd += " " + sys.argv[i]
+        else:
+          cmd.append(f"{sys.argv[i]}")
+    return cmd
+
+
+  def get_stdout(self) -> str:
+    outStr = ''
+    try:
+      while True:
+        outStr += self._out_queue.get_nowait().decode('utf-8')
+    except Empty:
+      return outStr
+
+  def get_stderr(self) -> str:
+    outStr = ''
+    try:
+      while True:
+        outStr += self._err_queue.get_nowait().decode('utf-8')
+    except Empty:
+      return outStr
+
+  def print(self, wait : bool = True) -> None:
+    if wait:
+      self.wait()
+    so = self.get_stdout()
+    se = self.get_stderr()        
+    if so!="": print(so) 
+    if se!="": print(se) 
+
+  def kill(self):
+    self._process.kill()
+
+  def waiting(self) -> bool:
+    return self._process.poll() == None
+
+g_log_debug = True
+def dbg(str): 
+  if g_log_debug: 
+    _dbg(str)
 
 class Bake26:
   # region Constants
@@ -547,6 +645,9 @@ class Bake26:
   c_argDoGif = "-g"
   c_argGenMDJson = "-gj"
   c_argGenMDBin = "-gb"
+  c_argTmp = "-t"
+  c_argVerbose = "--verbose"
+  c_argDebug = "--debug"
 
   @staticmethod
   def getOutput(layer: ExportLayer):
@@ -559,12 +660,19 @@ class Bake26:
 
   def __init__(self, args):
     self._outPath = ""
+    self._tmpPath = ""
     self._libFile = ""
     self._data = RenderInfo()
     self._is_cmd = not bpy.data.filepath
     self._fileObjName = ""  # default obj name for sprites
     self._doGif = True if args.do_gif else False
     self._doVid = True if args.do_vid else False
+    self._verbose = True if args.verbose else False
+    global g_log_debug
+    g_log_debug = True if args.debug else False
+
+    dbg(f"cwd='{os.getcwd()}'")
+
 
     # settings check
     assert(len(Bake26.c_layers) > 0)
@@ -587,7 +695,7 @@ class Bake26:
     args.outpath = os.path.normpath(args.outpath)
 
     if not os.path.exists(args.outpath):
-      msg("creating '" + args.outpath + "'")
+      msg(f"creating '{args.outpath}'")
       os.makedirs(args.outpath)
     self._outPath = args.outpath
     assert(os.path.exists(args.libpath))
@@ -595,6 +703,11 @@ class Bake26:
     self._is_cmd = not bpy.data.filepath
     if not self._is_cmd:
       throw("can only run from terminal for now")
+
+    if args.tmppath:
+      self._tmpPath = os.path.normpath(args.tmppath)
+    else:
+      self._tmpPath = self._outPath
 
     if os.path.isfile(args.inpath):
       # export single file
@@ -607,33 +720,42 @@ class Bake26:
       # msg(str(bpy.data.filepath))
     else:
       # blender is crashing with multiple files, so this launches a subprocess with the .blend
+      bprocs=[]
       def asyncExportBlend(fpath):
         if fpath != self._libFile:
-          cmd = sys.argv[0]
-          userarg = False
-          for i in range(1, len(sys.argv)):
-            lastarg = sys.argv[i - 1]
-            arg = sys.argv[i]
-            if lastarg == "--":
-              userarg = True
-            elif userarg == True and lastarg == Bake26.c_argInput:
-              cmd += " " + lastarg + " " + fpath
-            elif userarg == True and (arg == Bake26.c_argPack or arg == Bake26.c_argPackOnly):
-              pass
-            else:
-              cmd += " " + sys.argv[i]
-          msg("cmd="+cmd)
-          subprocess.run(cmd, shell=True)
+          dbg(f"Exporting: '{fpath}'")
+          cmd = BProc.getargs(fpath)
+          dbg(f"Cmd={cmd}")
+          bpr = BProc(cmd)
+          bprocs.append(bpr)
+          
       Utils.loopFilesByExt(args.inpath, '.blend', asyncExportBlend)
+    
+      finished = False
+      while not finished:
+        finished = True
+        for bp in bprocs:
+          if bp.waiting():
+            if self._verbose:
+              so = bp.get_stdout()
+              if so:
+                _msg(so)
+            se = bp.get_stderr()
+            if se:
+              _msg(se)
+            finished = False
+            time.sleep(0.1)
+            break
+      dbg("done")
 
   def appendLibData(self):
-    msg("lib=" + self._libFile)
+    dbg("lib=" + self._libFile)
     in_node_groups = []
     with bpy.data.libraries.load(self._libFile) as (data_from, data_to):
       for name in data_from.node_groups:
         in_node_groups.append({'name': name})
     bpy.ops.wm.append(directory=self._libFile + "/NodeTree/", files=in_node_groups)
-    msg("groups=" + str([g.name for g in bpy.data.node_groups]))
+    dbg("groups=" + str([g.name for g in bpy.data.node_groups]))
 
   def getRootName(self):
     name = ""
@@ -677,7 +799,7 @@ class Bake26:
     if len(exists) > 0:
       self._data._camera = exists[0]
       self._data._customCamera = True
-      msg("existing camera '" + str(exists[0]) + "' found")
+      dbg("existing camera '" + str(exists[0]) + "' found")
     else:
       # add camera
       self._data._customCamera = False
@@ -699,7 +821,7 @@ class Bake26:
 
   def finish(self):
     # stats
-    msg("render count = " + str(self._data._dbg_renderCount))
+    dbg("render count = " + str(self._data._dbg_renderCount))
 
   def setRenderSettings(self):
     # https://docs.blender.org/api/current/bpy.types.RenderSettings.html
@@ -841,7 +963,7 @@ class Bake26:
     return nv
 
   def renderObjectAnimations(self, inf):
-    msg("name=" + inf._name)
+    dbg("name=" + inf._name)
     self.backupObjectOutput(inf._name)
     self.renderAnimations(inf)
 
@@ -916,7 +1038,7 @@ class Bake26:
       else:
         self.renderAction(actioninf, inf._name, 0, 0, 0)
 
-    msg("exporting: " + str(inf._min_start) + "-" + str(inf._max_end))
+    dbg("exporting: " + str(inf._min_start) + "-" + str(inf._max_end))
     self.animateObjectActions(inf, renderob)
 
     for actname in inf._actions:
@@ -927,8 +1049,8 @@ class Bake26:
 
   def focusCamera(self, inf):
     bb = inf._sweepBox
-    msg("enclosing=" + str(inf._enclosingBox) + " v=" + str(inf._enclosingBox.volume()))
-    msg("sweep=" + str(inf._sweepBox) + " v=" + str(inf._enclosingBox.volume()))
+    dbg("enclosing=" + str(inf._enclosingBox) + " v=" + str(inf._enclosingBox.volume()))
+    dbg("sweep=" + str(inf._sweepBox) + " v=" + str(inf._enclosingBox.volume()))
 
     self._data._empty.location = bb.center()
     self._data._camera.location = self._data._empty.location
@@ -954,7 +1076,7 @@ class Bake26:
     else:
       self._data._render_height = self._data._render_size
       self._data._render_width = int(round(self._data._render_size * sx / sz))
-    msg("render res =" + str(self._data._render_width) + "x" + str(self._data._render_height))
+    dbg("render res =" + str(self._data._render_width) + "x" + str(self._data._render_height))
 
     bpy.context.scene.render.resolution_x = self._data._render_width
     bpy.context.scene.render.resolution_y = self._data._render_height
@@ -1015,13 +1137,14 @@ class Bake26:
     csframe = (dividend / (float(bpy.context.scene.render.fps) / float(self._data._sampleRate)))
 
   def exportGif(self, path, fcount, ext):
-    msg("doing gif, fcount="+str(fcount))
+    msg("creating gif, fcount="+str(fcount))
     csframe = Bake26.frameRate(100.0)  # (100.0 / (float(bpy.context.scene.render.fps) / float(self._data._sampleRate)))
     cmd = "convert -delay " + str(csframe) + " -dispose Background -loop 0 " + path + "/*"+ext+" " + path + "/output.gif &"
+    dbg("cmd=" + cmd)
     subprocess.run(cmd, shell=True)
 
   def exportMp4(self, path, fcount, ext):
-    msg("doing mp4, fcount="+str(fcount))
+    msg("creating mp4, fcount="+str(fcount))
     ss = 1
     sclxy = ""
     if ss != 1:
@@ -1030,7 +1153,7 @@ class Bake26:
       sclxy = " -s " + str(sx) + "x" + str(sy) + " "
     mp4frame = (float(bpy.context.scene.render.fps) / float(self._data._sampleRate))
     cmd = "ffmpeg -framerate " + str(int(mp4frame)) + " -stream_loop 5 -pattern_type glob -i '" + path + "/*"+ext+"' -crf 0 " + sclxy + " -c:v libx265 -x265-params lossless=1 '" + spritepath + "/output.mp4'"
-    msg("cmd=" + cmd)
+    dbg("cmd=" + cmd)
     subprocess.run(cmd, shell=True)
 
   def renderAngles(self, actioninf, obname, frame: float):
@@ -1178,14 +1301,14 @@ class Bake26:
     # BIN
     if mdbin == True:
       mdpath = os.path.join(outpath, Bake26.c_B2MT_prefix + ".bin")
-      msg("saving metadata path="+mdpath)
+      msg(f"saving {logcol.greenb}{mdpath}{logcol.reset}")
       with BinaryFile.openWrite(mdpath) as bf:
         df.serialize(bf)
 
     # JSON
     if mdjson == True:
       mdpath = os.path.join(outpath, Bake26.c_B2MT_prefix + ".json")
-      msg("saving metadata path="+mdpath)
+      msg(f"saving {logcol.greenb}{mdpath}{logcol.reset}")
       with open(mdpath, 'w') as f:
         f.write(Utils.toJson(df))
 
@@ -1197,7 +1320,7 @@ class Bake26:
     fdir = self.objectOutputPath(ob._name, False, 0)
     fpath = os.path.join(fdir, ob._name + Bake26.c_bobj_binext)
     # fpath = os.path.join(fdir, ob._name + '.json')
-    msg("saving obj metadata to " + fpath)
+    dbg(f"saving obj meta to '{fpath}'")
 
     with BinaryFile.openWrite(fpath) as bf:
       ob.serialize(bf)
@@ -1218,7 +1341,7 @@ class Bake26:
         if Bake26.c_bobj_binext in item_path:
           ob = b2_objdata()
 
-          msg("reading obj md " + item_path)
+          dbg("reading obj md " + item_path)
 
           with BinaryFile.openRead(item_path) as bf:  # open(item_path, 'rb') as file:
             ob.deserialize(bf)
@@ -1262,12 +1385,15 @@ def getArgs():
   parser.add_argument(Bake26.c_argInput, dest="inpath", type=str, required=True, help="path to .blend files")
   parser.add_argument(Bake26.c_argOutput, dest="outpath", type=str, required=True, help="output path")
   parser.add_argument(Bake26.c_argLibrary, dest="libpath", type=str, required=True, help="library file path")
+  parser.add_argument(Bake26.c_argTmp, dest="tmppath", type=str, required=False, help="temporary output directory for renders")
   parser.add_argument(Bake26.c_argPack, dest="pack_enable", action='store_true', required=False, help="pack textures in -o")
   parser.add_argument(Bake26.c_argPackOnly, dest="pack_only", action='store_true', required=False, help="only pack textures in -o, dont export")
   parser.add_argument(Bake26.c_argDoVid, dest="do_vid", action='store_true', required=False, help="generate video preview of animation")
   parser.add_argument(Bake26.c_argDoGif, dest="do_gif", action='store_true', required=False, help="generate gif preview of animation")
   parser.add_argument(Bake26.c_argGenMDJson, dest="genmd_json", action='store_true', required=False, help="generate JSON  metadata")
   parser.add_argument(Bake26.c_argGenMDBin, dest="genmd_bin", action='store_true', required=False, help="generate BIN metadata")
+  parser.add_argument(Bake26.c_argVerbose, dest="verbose", action='store_true', required=False, help="print output of blender subprocesses")
+  parser.add_argument(Bake26.c_argDebug, dest="debug", action='store_true', required=False, help="enable debug output")
   args = parser.parse_args(argv)
   return args
 

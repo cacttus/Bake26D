@@ -7,6 +7,18 @@ Blender script to output layered "2.6D" sprites from object animations, for game
 * Can render any number of angles + animations
 * (Note: Not sure what this kind of sprite is called so calling it 2.6D for now)
 
+## Install
+### Manual install
+* Python
+  * Install PIL for *BLENDER PYTHON*:
+    * cd PATH_TO_BLENDER_PYTHON && ./python* -m ensurepip --default-pip && ./python* -m pip install Pillow
+    * Ex:
+      * cd ~/Desktop/apps/blender*/3.*/python/bin && ./python* -m ensurepip --default-pip && ./python* -m pip install Pillow
+* C++ Test App
+  * Debian Dependencies
+    * sudo apt install build-essential libglew-dev libglfw3-dev ninja-build libglm-dev libncurses-dev -y
+* TODO: finish install.sh
+
 ## Usage
 ### Blender script (Bake26.py)
 1. Command:
@@ -19,11 +31,7 @@ Blender script to output layered "2.6D" sprites from object animations, for game
     * -g generate gif preview of animation
     * -gj export metadata as .json 
     * -gb export metadata as .bin (default)
-* Note: Must install PIL *FOR BLENDER PYTHON* (not system python):
-  * https://blender.stackexchange.com/questions/119051/how-do-i-install-pillow-and-or-pip-in-blender-python-in-windows-os
-  * _Example:_
-    * blender-3.4.1-linux-x64/3.4/python/bin$ ./python* -m ensurepip --default-pip
-    * blender-3.4.1-linux-x64/3.4/python/bin$ ./python* -m pip install Pillow    
+
 * Note: Script *requires* the _library.blend file (-l)
 * Note: Metadata (B2MT.BIN) placed in -o (output dir)
 * Note: Metadata texture paths are relative to B2MT.BIN file
@@ -33,12 +41,12 @@ Blender script to output layered "2.6D" sprites from object animations, for game
 * Note: Metadata exports sprite origin = top left corner
 
 ### C++ Test App
-Dependencies (Debian = sudo apt install)
-* build-essential
-* libglew-dev
-* libglfw3-dev  
-* ninja-build
-* (Note: sudo update-alternatives --config c++)
+* Dependencies (Debian = sudo apt install)
+  * sudo apt install build-essential libglew-dev libglfw3-dev ninja-build libglm-dev libncurses-dev -y
+
+* Note: set global compiler
+  * sudo update-alternatives --config c++
+
 * Controls:
   * WSAD + Mouse - Move camera
   * LRUD - Move player

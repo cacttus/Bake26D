@@ -9,3 +9,4 @@ obj
 CMakeCache.txt
 *.vcxproj.filters
 *.vcxproj.user
+src/__pycache__/
